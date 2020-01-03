@@ -13,3 +13,5 @@ Abstract: We introduce DeepInversion, a new method for synthesizing images from 
 This snippet will generate 84 images by inverting resnet50 model from torchvision package.
 
 `python main_imagenet.py --bs=84 --do_flip --exp_name="test_rn50_3" --r_feature=0.01 --arch_name="resnet50" --fp16 --verifier`
+
+Examples of images inverted from ResNet50v15 model: [Nvidia Google Drive](https://drive.google.com/open?id=1AXCW6_E_Qtr5qyb9jygGaLub13gQo10c), best viewed with gThumb, organized by ImageNet classes, names: [link](https://gist.github.com/yrevar/942d3a0ac09ec9e5eb3a)
