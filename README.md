@@ -1,5 +1,14 @@
 ![Python 3.6](https://img.shields.io/badge/python-3.6-green.svg)
 
+## How to run for yolo: 
+```
+$bash download_files.sh # dowloads a few files required for running deepinversion on yolo
+$./runner_yolo.sh # optimizes a batch of 64 images and stores it in ./yoloResults
+```
+
+To use mean/var of a real batch of data instead of mean/var in bnorm parameters, uncomment 
+`--cache_batch_stats` flag in `runner_yolo.sh`. 
+
 # Intro
 
 Code for the paper:

@@ -13,6 +13,6 @@ python main_yolo.py --bs=64 \
 --tv_l1=0.0 \
 --tv_l2=0.005 \
 --lr=0.005 \
---wd=0.0 \
+--wd=0.0000001 \
 --save_every=400 \
 --display_every=1 # --cache_batch_stats 
