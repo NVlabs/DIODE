@@ -18,7 +18,7 @@ import random
 from PIL import Image 
 
 from deepinversion_yolo import DeepInversionClass
-from models.yolo.yolostuff import get_model_and_dataloader, run_inference
+from models.yolo.yolostuff import get_model_and_dataloader, run_inference, calculate_metrics, get_verifier
 
 def create_folder(directory):
     if not os.path.exists(directory):
@@ -31,8 +31,11 @@ def run(args):
 
     net, (imgs, targets), loss_fun = get_model_and_dataloader(batch_size=args.bs, load_pickled=True)
     net = net.to(device)
+    net_verifier = get_verifier()
+    net_verifier = net_verifier.to(device)
 
     net.eval() 
+    net_verifier.eval()
 
     args.start_noise = True
 
@@ -69,6 +72,7 @@ def run(args):
     network_output_function = lambda x: x # Return output from all branches of Yolo model
 
     DeepInversionEngine = DeepInversionClass(net_teacher=net,
+                                             net_verifier=net_verifier,
                                              path=args.path,
                                              logger_big=None,
                                              parameters=parameters,
@@ -80,7 +84,17 @@ def run(args):
     # Save the input image to disk
     imgs = imgs.float() / 255.0
     imgs_with_boxes = run_inference(net, imgs)
-    DeepInversionEngine.save_image(imgs_with_boxes, os.path.join(DeepInversionEngine.path, "input_image.jpg"), halfsize=False)
+    imgs_with_boxes_verifier = run_inference(net_verifier, imgs)
+    DeepInversionEngine.save_image(imgs_with_boxes, os.path.join(DeepInversionEngine.path, "input_image_teacher.jpg"), halfsize=False)
+    DeepInversionEngine.save_image(imgs_with_boxes_verifier, os.path.join(DeepInversionEngine.path, "input_image_verifier.jpg"), halfsize=False)
+
+    # Calculate metrics 
+    _, _, mean_ap_verifier, mean_f1_verifier = calculate_metrics(net_verifier, imgs, targets)
+    DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mAP: {} \n".format(float(mean_ap_verifier)))
+    DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mF1: {} \n".format(float(mean_f1_verifier)))
+    _, _, mean_ap_net, mean_f1_net = calculate_metrics(net, imgs, targets)
+    DeepInversionEngine.txtwriter.write("[NET] Real image mAP: {} \n".format(float(mean_ap_verifier)))
+    DeepInversionEngine.txtwriter.write("[NET] Real image mF1: {} \n".format(float(mean_f1_verifier)))
 
     # TV value for real data 
     from deepinversion_yolo import get_image_prior_losses 

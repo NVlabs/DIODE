@@ -11,7 +11,7 @@ from PIL import Image
 import numpy as np
 from tensorboardX import SummaryWriter
 import os, sys, json
-from models.yolo.yolostuff import run_inference
+from models.yolo.yolostuff import run_inference, calculate_metrics
 
 
 def lr_policy(lr_fn):
@@ -211,7 +211,7 @@ def get_image_prior_losses(inputs_jit):
 
 class DeepInversionClass(object):
     def __init__(self, 
-                 net_teacher=None, path="./temp/",
+                 net_teacher=None, net_verifier=None, path="./temp/",
                  logger_big=None,
                  parameters=dict(),
                  setting_id=0,
@@ -258,6 +258,7 @@ class DeepInversionClass(object):
         # torch.manual_seed(torch.cuda.current_device())
         
         self.net_teacher = net_teacher
+        self.net_verifier = net_verifier
         # self.net_teacher = nn.DataParallel(net_teacher, device_ids=[0,1,2], output_device=3)
 
         if "resolution" in parameters.keys():
@@ -523,14 +524,39 @@ class DeepInversionClass(object):
                 # Save to disk
                 if (iteration % self.save_every) == 0: 
                     im_copy = inputs.clone().detach().cpu()
-                    if iteration > self.iterations // 4: 
-                        im_copy = run_inference(net_teacher, im_copy) # Add bounding boxes to generated images
+
+                    # compute metrics (mp, mr, map, mf1) for the updated image on net_verifier
+                    _, _, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets)
+                    self.writer.add_scalar("unweighted/mAP VERIFIER", float(mean_ap), iteration)
+                    self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mean_f1), iteration)
+                    self.txtwriter.write("unweighted/mAP VERIFIER {}\n".format(float(mean_ap)))
+                    self.txtwriter.write("unweighted/mF1 VERIFIER {}\n".format(float(mean_f1)))
+                    print("[UNWEIGHTED] mAP VERIFIER {}".format(mean_ap))
+                    print("[UNWEIGHTED] mF1 VERIFIER {}".format(mean_f1))
+
+                    # compute metrics (mp, mr, map, mf1) for the updated image on net_teacher
+                    _, _, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets)
+                    self.writer.add_scalar("unweighted/mAP TEACHER", float(mean_ap), iteration)
+                    self.writer.add_scalar("unweighted/mF1 TEACHER", float(mean_f1), iteration)
+                    self.txtwriter.write("unweighted/mAP TEACHER {}\n".format(float(mean_ap)))
+                    self.txtwriter.write("unweighted/mF1 TEACHER {}\n".format(float(mean_f1)))
+                    print("[UNWEIGHTED] mAP TEACHER {}".format(mean_ap))
+                    print("[UNWEIGHTED] mF1 TEACHER {}".format(mean_f1))
+
+                    im_boxes_teacher = run_inference(self.net_teacher, im_copy) # Add bounding boxes to generated images
+                    im_boxes_verifier= run_inference(self.net_verifier, im_copy) # Add bounding boxes to generated images
                     self.save_image(
-                        batch_tens = im_copy,
-                        loc   = os.path.join(self.path, "iteration_{}.jpg".format(iteration)), 
+                        batch_tens =im_boxes_teacher,
+                        loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)), 
                         halfsize=False
                     )
-                    del im_copy
+                    self.save_image(
+                        batch_tens =im_boxes_verifier,
+                        loc   = os.path.join(self.path, "iteration_verifier_{}.jpg".format(iteration)), 
+                        halfsize=False
+                    )
+                    del im_copy, im_boxes_teacher, im_boxes_verifier
+                    torch.cuda.empty_cache()
 
                 # optimizer.state = collections.defaultdict(dict)
 
@@ -572,6 +598,7 @@ class DeepInversionClass(object):
         Replace the cached_mean and cached_var with statistics from real data
         """
         self.net_teacher.eval() 
+        self.net_verifier.eval()
         # Enable caching of real img batch stats
         for bnorm_hook in self.loss_r_feature_layers: 
             assert bnorm_hook.cache_batch_stats == False

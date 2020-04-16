@@ -1,6 +1,6 @@
 from .datasets import LoadImagesAndLabels
 from .models import Darknet, compute_loss 
-from .utils import labels_to_class_weights, non_max_suppression, plot_one_box
+from .utils import labels_to_class_weights, non_max_suppression, plot_one_box, clip_coords, xywh2xyxy, box_iou, ap_per_class
 import torch 
 import glob, pickle
 import numpy as np 
@@ -42,12 +42,13 @@ def run_inference(net, batch_tens):
             module.inference_enabled = True
 
     # Inference
-    pred = net(imgs)[0] # (batchsize, bboxes, 85) 
+    with torch.no_grad():
+        pred = net(imgs)[0] # (batchsize, bboxes, 85) 
 
-    # Apply NMS
-    conf_thres = 0.3 
-    iou_thres  = 0.6 
-    pred = non_max_suppression(pred, conf_thres, iou_thres, classes=None, agnostic=False)
+        # Apply NMS
+        conf_thres = 0.3 
+        iou_thres  = 0.6 
+        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=None, agnostic=False)
 
     # Plot bounding boxes on each image
     imgs_with_boxes = []
@@ -64,7 +65,8 @@ def run_inference(net, batch_tens):
                 label = '%s %.2f' % (names[int(cls)], conf) 
                 plot_one_box(xyxy, img_np, label=label, color=colors[int(cls)])
         else: 
-            print("[INFERENCE] NoneType found in Prediction skipping drawing boxes on this image idx {}".format(idx))
+            # print("[INFERENCE] NoneType found in Prediction skipping drawing boxes on this image idx {}".format(idx))
+            pass
         
         imgs_with_boxes.append(np.transpose(img_np, axes=(2,0,1)))
     imgs_with_boxes = np.array(imgs_with_boxes).astype(np.float32) / 255.0 
@@ -75,6 +77,9 @@ def run_inference(net, batch_tens):
     for mdef, module in zip(net.module_defs, net.module_list): 
         if mdef["type"] == "yolo": 
             module.inference_enabled = False
+    
+    del pred 
+    torch.cuda.empty_cache()
 
     return imgs_with_boxes
 
@@ -142,4 +147,119 @@ def get_model_and_dataloader(batch_size=64, load_pickled=True):
 
     return model, (imgs, targets), compute_loss
 
-    
+def calculate_metrics(net, imgs, targets):
+    """
+    Calculate iou metrics on network using imgs and corresponding targets
+    """
+    imgs, targets = imgs.clone().detach().cuda(), targets.clone().detach().cuda()
+
+    # Enable inference
+    net.eval()
+    net.inference_enabled = True
+    for mdef, module in zip(net.module_defs, net.module_list):
+        if mdef["type"] == "yolo":
+            module.inference_enabled = True
+
+    # Inference
+    with torch.no_grad():
+        preds = net(imgs)[0] # (batchsize, bboxes, 85)
+        # Apply NMS
+        conf_thres = 0.01 # 0.01 for speed, 0.001 for best mAP
+        iou_thres  = 0.6
+        output = non_max_suppression(preds, conf_thres, iou_thres, classes=None, agnostic=False)
+
+    # hyperparameters
+    batch_size, _, height, width = imgs.shape
+    iouv = torch.tensor([0.5], dtype=torch.float32).cuda()
+    niou = iouv.numel()
+    whwh = torch.tensor([width, height, width, height], dtype=torch.float32).cuda()
+    stats = []
+
+    # Compute metrics per image
+    for img_idx, pred in enumerate(output):
+        labels = targets[targets[:, 0] == img_idx , 1:]
+        nl = len(labels)
+        tcls = labels[:, 0].tolist()  # target class
+
+        if pred is None:
+            if nl:
+                stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+            continue
+
+        # Clip boxes to image bounds
+        clip_coords(pred, (height, width))
+
+        # Assign all predictions as incorrect
+        correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool).cuda()
+
+        detected = []  # target indices
+        tcls_tensor = labels[:, 0]
+
+        # target boxes
+        tbox = xywh2xyxy(labels[:, 1:5]) * whwh
+
+        # Per target class
+        for cls in torch.unique(tcls_tensor):
+            ti = (cls == tcls_tensor).nonzero().view(-1)  # prediction indices
+            pi = (cls == pred[:, 5]).nonzero().view(-1)  # target indices
+
+            # Search for detections
+            if pi.shape[0]:
+                # Prediction to target ious
+                ious, i = box_iou(pred[pi, :4], tbox[ti]).max(1)  # best ious, indices
+
+                # Append detections
+                for j in (ious > iouv[0]).nonzero():
+                    d = ti[i[j]]  # detected target
+                    if d not in detected:
+                        detected.append(d)
+                        correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+                        if len(detected) == nl:  # all targets already located in image
+                            break
+
+        # Append statistics (correct, conf, pcls, tcls)
+        stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+
+    # Compute statistics
+    stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+    p, r, ap, f1, ap_class = ap_per_class(*stats)
+    mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean()
+    nt = np.bincount(stats[3].astype(np.int64), minlength=net.nc)  # number of targets per class
+
+    # print("MP: {} MR: {} MAP: {} MF1: {}".format(mp, mr, map, mf1))
+    # print("Number of targets per class: {}".format(nt))
+
+    # Disable inference
+    net.inference_enabled = False
+    for mdef, module in zip(net.module_defs, net.module_list):
+        if mdef["type"] == "yolo":
+            module.inference_enabled = False
+
+    # save memory 
+    del output, preds
+    torch.cuda.empty_cache()
+    return mp, mr, map, mf1
+
+def get_verifier():
+    # params
+    verifier_cfg = "./models/yolo/cfg/yolov3.cfg" 
+    img_size = 320
+    weights = "./models/yolo/yolov3.pt"
+    cpu_device = torch.device("cpu")
+    gpu_device = torch.device("cuda:0")
+    num_workers = 0
+    nc = 80 
+    arc = "default"
+
+    # verifiers
+    verifier = Darknet(verifier_cfg, img_size)
+    verifier.load_state_dict(torch.load(weights, map_location=cpu_device)['model'])
+
+    verifier.nc = nc  # attach number of classes to verifier
+    verifier.arc = arc  # attach yolo architecture
+    verifier.hyp = hyp  # attach hyperparameters to verifier
+    verifier.gr = 0.0  # giou loss ratio (obj_loss = 1.0 or giou)
+    # verifier.class_weights = labels_to_class_weights(labels, nc).to(gpu_device)  # attach class weights
+
+    return verifier
+
