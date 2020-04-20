@@ -11,7 +11,7 @@ from PIL import Image
 import numpy as np
 from tensorboardX import SummaryWriter
 import os, sys, json
-from models.yolo.yolostuff import run_inference, calculate_metrics
+from models.yolo.yolostuff import run_inference, calculate_metrics, flip_targets, jitter_targets 
 
 
 def lr_policy(lr_fn):
@@ -414,11 +414,16 @@ class DeepInversionClass(object):
                 else:
                     inputs_jit = inputs 
 
+                targets_jit = targets.clone().detach() 
                 inputs_jit = torch.roll(inputs_jit, shifts=(off1, off2), dims=(2, 3))
+                if any([off1, off2]):
+                    height, width = inputs_jit.shape[2], inputs_jit.shape[3]
+                    targets_jit = jitter_targets(targets_jit, off2, off1, img_shape=(width, height))
 
                 flip = random.random() > 0.5
                 if flip and self.do_flip:
                     inputs_jit = torch.flip(inputs_jit, dims=(3,))
+                    targets_jit = flip_targets(targets_jit, horizontal=True, vertical=False)
 
                 # foward with jit images
                 inputs_jit = torch.clamp(inputs_jit, min=0.0, max=1.0)
@@ -427,7 +432,7 @@ class DeepInversionClass(object):
                 outputs = self.network_output_function(outputs)
 
                 # R_cross classification loss NOTE: MODIFIED FOR YOLO
-                task_loss, _ = criterion(outputs, targets, net_teacher)
+                task_loss, _ = criterion(outputs, targets_jit, net_teacher)
                 task_loss_copy = task_loss.clone().detach()
                 task_loss = self.main_loss_multiplier * task_loss 
 

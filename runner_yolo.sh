@@ -4,7 +4,7 @@ export CUDA_VISIBLE_DEVICES="auto"
 source auto_gpu.sh
 echo "${CUDA_VISIBLE_DEVICES}"
 python main_yolo.py --bs=64 \
---jitter=0 \
+--jitter=10 --do_flip \
 --path="./yoloResults/test_metrics/${now}" \
 --iterations=8000 \
 --r_feature=0.01 \
