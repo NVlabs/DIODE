@@ -1,6 +1,6 @@
 from .datasets import LoadImagesAndLabels
 from .models import Darknet, compute_loss 
-from .utils import labels_to_class_weights, non_max_suppression, plot_one_box, clip_coords, xywh2xyxy, box_iou, ap_per_class
+from .utils import labels_to_class_weights, non_max_suppression, plot_one_box, clip_coords, xywh2xyxy, xyxy2xywh, box_iou, ap_per_class
 import torch 
 import glob, pickle
 import numpy as np 
@@ -263,3 +263,79 @@ def get_verifier():
 
     return verifier
 
+def flip_targets(targets, horizontal=True, vertical=False): 
+    """
+    horizontal and vertical flipping for targets
+    """
+    assert targets.shape[1] == 6 
+    targets_flipped = targets.clone().detach() 
+    if horizontal: 
+        targets_flipped[:,2] = 0.5 - (targets_flipped[:,2] - 0.5)
+    if vertical: 
+        targets_flipped[:,3] = 0.5 - (targets_flipped[:,3] - 0.5)
+    return targets_flipped
+
+def jitter_targets(targets, xshift=0, yshift=0, img_shape=(320,320)): 
+    """
+    Apply horizontal & vertical jittering to the targets for given img_shape
+    note: img_shape is in real world parameters, but targets are still between 0-1 
+    img_shape = (width, height)
+    targets shape = [batch_idx, cls, center x, center y, w, h]
+    """ 
+    assert targets.shape[1] == 6
+    targets_jittered = targets.clone().detach().cpu() 
+    width, height = img_shape 
+    xywh = targets_jittered[:,2:]
+    whwh = torch.tensor([width, height, width, height], dtype=torch.float32)
+    xyxy = xywh2xyxy(xywh) * whwh
+
+    # adjust the tbox 
+    xyxy[:,0] += xshift 
+    xyxy[:,2] += xshift 
+    xyxy[:,1] += yshift 
+    xyxy[:,3] += yshift 
+
+    # Limit co-ords
+    xyxy[:,0] = torch.clamp(xyxy[:,0], min=0, max=width)
+    xyxy[:,2] = torch.clamp(xyxy[:,2], min=0, max=width) 
+    xyxy[:,1] = torch.clamp(xyxy[:,1], min=0, max=height)
+    xyxy[:,3] = torch.clamp(xyxy[:,3], min=0, max=height)
+
+    # xyxy --> xywh 
+    xywh = xyxy2xywh(xyxy / whwh)
+    targets_jittered[:,2:] = xywh
+
+    # remove boxes that have 0 area 
+    oof = (targets_jittered[:,-1] * targets_jittered[:,-2] * width * height) < 1 
+    # print("Jittering Dropping {} boxes".format(oof.sum()))
+    targets_jittered = targets_jittered[~oof]
+
+    return targets_jittered.to(targets.device)
+
+
+def plot_all_boxes(imgs, targets): 
+    """
+    Useful as a debugging tool for def: jitter_box and def: flip_box 
+    """
+
+    # targets shape: #boxes x 6  [batch_idx, cls, x, y, w, h]
+    targets = targets.clone().detach().cpu() 
+    imgs_np = imgs.clone().detach().cpu().numpy()
+    imgs_np = np.transpose(imgs_np, axes=(0, 2, 3, 1))
+    imgs_np = (imgs_np * 255).astype(np.uint8)
+    imgs_np = np.ascontiguousarray(imgs_np, dtype=np.uint8)
+
+    # plot box-by-box 
+    height, width = imgs_np.shape[1], imgs_np.shape[2]
+    whwh = torch.tensor([width, height, width, height], dtype=torch.float32)
+    for box_idx, box in enumerate(targets):
+        box_xyxy = torch.squeeze( xywh2xyxy(box[None, 2:]) * whwh )
+        img_idx  = int(box[0])
+        cls      = int(box[1])
+        label="cls:{}".format(str(cls))
+        plot_one_box(box_xyxy, imgs_np[img_idx], label=label, color=(153, 51, 255))
+
+    imgs_np = np.transpose(imgs_np, axes=(0, 3, 1, 2))
+    imgs_with_boxes = torch.from_numpy(imgs_np.astype(np.float32) / 255.0)
+    
+    return imgs_with_boxes
