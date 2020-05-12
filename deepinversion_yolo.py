@@ -11,7 +11,7 @@ from PIL import Image
 import numpy as np
 from tensorboardX import SummaryWriter
 import os, sys, json
-from models.yolo.yolostuff import run_inference, calculate_metrics, flip_targets, jitter_targets 
+from models.yolo.yolostuff import run_inference, calculate_metrics, flip_targets, jitter_targets, random_erase_masks
 
 
 def lr_policy(lr_fn):
@@ -105,8 +105,8 @@ class DeepInversionFeatureHook():
                 self.cached_var  = module.running_var.data.clone().detach()     
                 self.cached_mean = module.running_mean.data.clone().detach() 
 
-            r_feature = torch.norm(self.cached_var - std, 2) + torch.norm(
-                self.cached_mean - mean, 2)
+            r_feature = torch.norm(self.cached_var - std, 1) + torch.norm(
+                self.cached_mean - mean, 1)
             # r_feature = torch.norm(module.running_var.data - std, 2) + torch.norm(
             #     module.running_mean.data - mean, 2)
         else:
@@ -166,11 +166,13 @@ def clip(image_tensor, use_amp=False):
     adjust the input based on mean and variance
     '''
     if use_amp:
+        raise NotImplementedError
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float16)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float16)
     else:
-        mean = np.array([0.485, 0.456, 0.406])
-        std = np.array([0.229, 0.224, 0.225])
+        mean = np.array([0.48853, 0.48853, 0.48853])
+        std = np.array([0.08215 ** 0.5, 0.08215 ** 0.5, 0.08215 ** 0.5])
+
     for c in range(3):
         m, s = mean[c], std[c]
         image_tensor[:, c] = torch.clamp(image_tensor[:, c], -m / s, (1 - m) / s)
@@ -256,7 +258,6 @@ class DeepInversionClass(object):
 
         # for reproducibility
         # torch.manual_seed(torch.cuda.current_device())
-        
         self.net_teacher = net_teacher
         self.net_verifier = net_verifier
         # self.net_teacher = nn.DataParallel(net_teacher, device_ids=[0,1,2], output_device=3)
@@ -278,11 +279,17 @@ class DeepInversionClass(object):
         self.iterations = parameters["iterations"]
         self.save_every = parameters["save_every"]
         self.display_every = parameters["display_every"]
+        self.beta1 = parameters["beta1"]
+        self.beta2 = parameters["beta2"]
 
         self.l1_reg = 0.0
         self.l2_reg = 0.0
 
         self.jitter = parameters["jitter"]
+        self.rand_brightness = parameters["rand_brightness"]
+        self.rand_contrast = parameters["rand_contrast"]
+        self.random_erase  = parameters["random_erase"]
+        self.mean_var_clip = parameters["mean_var_clip"]
         self.criterion = criterion
 
         self.network_output_function = network_output_function
@@ -295,6 +302,7 @@ class DeepInversionClass(object):
             self.lr = coefficients["lr"]
             self.first_bn_coef = coefficients["first_bn_coef"]
             self.main_loss_multiplier = coefficients["main_loss_multiplier"]
+            self.alpha_img_stats = coefficients["alpha_img_stats"]
         else:
             print("Provide a dictionary with ")
 
@@ -385,14 +393,14 @@ class DeepInversionClass(object):
             lim_0, lim_1 = self.jitter // lower_res, self.jitter // lower_res
             # img_res = img_original // lower_res
 
-            optimizer = optim.Adam([inputs], lr=self.lr, weight_decay=self.wd_coeff)
+            optimizer = optim.Adam([inputs], lr=self.lr, betas=[self.beta1, self.beta2], weight_decay=self.wd_coeff)
             # optimizer = optim.SGD([inputs], lr=self.lr)
             # optimizer = optim.Adam([inputs], lr=self.lr, betas=[0.0, 0.0])
             ## optimization is the weakest point of algorithm. Sometimes, settings betas to zero helps optimization
             ## also there are beta schedulers latter.
             # optimizer = optim.AdamW([inputs], lr=self.lr, betas=[0.0, 0.0], weight_decay=self.wd_coeff)
 
-            # lr_scheduler = lr_cosine_policy(self.lr, 10, iterations_per_layer)
+            lr_scheduler = lr_cosine_policy(self.lr, 100, iterations_per_layer)
 
             # beta0_scheduler = mom_cosine_policy(0.9, 250, iterations_per_layer)
             # beta1_scheduler = mom_cosine_policy(0.999, 250, iterations_per_layer)
@@ -405,9 +413,12 @@ class DeepInversionClass(object):
                 off1 = random.randint(-lim_0, lim_0)
                 off2 = random.randint(-lim_1, lim_1)
 
-                # lr_scheduler(optimizer, iteration_loc, iteration_loc)
+                lr_scheduler(optimizer, iteration_loc, iteration_loc)
                 # beta0_scheduler(optimizer, iteration_loc, iteration_loc, "betas", 0)
                 # beta1_scheduler(optimizer, iteration_loc, iteration_loc, "betas", 1)
+
+                if self.mean_var_clip:
+                    inputs.data = clip(inputs.data, use_amp=False)
 
                 if lower_res!=1:
                     inputs_jit = poolingmod(inputs)
@@ -424,6 +435,19 @@ class DeepInversionClass(object):
                 if flip and self.do_flip:
                     inputs_jit = torch.flip(inputs_jit, dims=(3,))
                     targets_jit = flip_targets(targets_jit, horizontal=True, vertical=False)
+                
+                # Random brightness & contrast
+                if self.rand_brightness:
+                    rand_brightness = torch.randn(inputs_jit.shape[0], 1, 1,1).cuda() * 0.2
+                    inputs_jit += rand_brightness
+                if self.rand_contrast:
+                    rand_contrast   =  1.0 + torch.randn(inputs_jit.shape[0], 1, 1,1).cuda() * 0.1 
+                    inputs_jit *= rand_contrast
+                
+                # Random erase mask 
+                if self.random_erase:
+                    masks = random_erase_masks(inputs_jit.shape, return_cuda=True) 
+                    inputs_jit *= masks
 
                 # foward with jit images
                 inputs_jit = torch.clamp(inputs_jit, min=0.0, max=1.0)
@@ -443,28 +467,28 @@ class DeepInversionClass(object):
                 prior_loss_var_l1 = self.var_scale_l1 * prior_loss_var_l1 
                 prior_loss_var_l2 = self.var_scale_l2 * prior_loss_var_l2 
 
-
                 # R_feature loss 
                 loss_r_feature = sum([mod.r_feature for mod in self.loss_r_feature_layers])
                 loss_r_feature_copy = loss_r_feature.clone().detach()
                 loss_r_feature = self.bn_reg_scale * loss_r_feature 
-                # loss_r_feature = loss_r_feature.to(task_loss.device)
-                # loss_r_feature = torch.tensor(0.0) 
-
-                # print(loss_r_feature.device, task_loss.device, prior_loss_var_l2.device)
-                # combining losses
-                # loss_aux = self.var_scale_l2 * loss_var_l2 + \
-                #          self.var_scale_l1 * loss_var_l1 + \
-                #           self.bn_reg_scale * loss_r_feature
-
                 
+                # R_feature loss layer_1
                 loss_r_feature_first = sum([mod.r_feature for mod in self.loss_r_feature_layers[:1]])
                 loss_r_feature_first_copy = loss_r_feature_first.clone().detach()
                 loss_r_feature_first = self.first_bn_coef * loss_r_feature_first 
 
-                # loss = self.main_loss_multiplier * loss + loss_aux
+                # # Match image stats
+                # img_mean = inputs_jit.mean([2, 3])
+                # img_std = inputs_jit.std([2,3])
+                # # print(img_mean.mean([0]), img_std.mean([0]))
+                # natural_image_mean = torch.tensor([0.51965, 0.49869, 0.44715]).cuda()
+                # natural_image_std = torch.tensor([0.24281, 0.23689, 0.24182]).cuda()
+                # loss_img_stats = torch.norm(img_mean - natural_image_mean, 2, dim=1).mean() + \
+                #                              torch.norm(img_std - natural_image_std, 2, dim=1).mean()
+                # loss_img_stats_copy = loss_img_stats.clone().detach()
+                # loss_img_stats *= self.alpha_img_stats
 
-                total_loss = task_loss + prior_loss_var_l1 + prior_loss_var_l2 + loss_r_feature + loss_r_feature_first
+                total_loss = task_loss + prior_loss_var_l1 + prior_loss_var_l2 + loss_r_feature + loss_r_feature_first # + loss_img_stats
 
                 # To check if weight decay is working 
                 inputs_norm = torch.norm(inputs) / inputs.shape[0] 
@@ -484,16 +508,19 @@ class DeepInversionClass(object):
                 self.writer.add_scalar("weighted/prior_loss_var_l2", prior_loss_var_l2.item(), iteration)
                 self.writer.add_scalar("weighted/loss_r_feature", loss_r_feature.item(), iteration)
                 self.writer.add_scalar("weighted/loss_r_feature_first", loss_r_feature_first.item(), iteration)
+                # self.writer.add_scalar("weighted/loss_img_stats", loss_img_stats.item(), iteration)
                 # Unweighted loss
                 self.writer.add_scalar("unweighted/task_loss", task_loss_copy.item() , iteration)
                 self.writer.add_scalar("unweighted/prior_loss_var_l1", prior_loss_var_l1_copy.item() , iteration)
                 self.writer.add_scalar("unweighted/prior_loss_var_l2", prior_loss_var_l2_copy.item() , iteration)
                 self.writer.add_scalar("unweighted/loss_r_feature", loss_r_feature_copy.item() , iteration)
                 self.writer.add_scalar("unweighted/loss_r_feature_first", loss_r_feature_first_copy.item() , iteration) 
+                # self.writer.add_scalar("unweighted/loss_img_stats", loss_img_stats_copy.item(), iteration)
                 # self.writer.add_scalar("unweighted/loss_r_feature_L0", self.loss_r_feature_layers[0].r_feature.item(), iteration)
                 # self.writer.add_scalar("unweighted/loss_r_feature_L1", self.loss_r_feature_layers[1].r_feature.item(), iteration)
                 # self.writer.add_scalar("unweighted/loss_r_feature_L2", self.loss_r_feature_layers[2].r_feature.item(), iteration)
                 self.writer.add_scalar("unweighted/inputs_norm", inputs_norm.item(), iteration) 
+                self.writer.add_scalar("learning_rate", float(optimizer.param_groups[0]["lr"]), iteration)
             
                 # Write logs to txt file 
                 # weighted
@@ -505,16 +532,19 @@ class DeepInversionClass(object):
                 self.txtwriter.write("weighted/prior_loss_var_l2 {}\n".format(prior_loss_var_l2.item()))
                 self.txtwriter.write("weighted/loss_r_feature {}\n".format(loss_r_feature.item()))
                 self.txtwriter.write("weighted/loss_r_feature_first {}\n".format(loss_r_feature_first.item()))
+                # self.txtwriter.write("weighted/loss_img_stats {}\n".format(loss_img_stats.item()))
                 # unweighted
                 self.txtwriter.write("unweighted/task_loss {}\n".format(task_loss_copy.item() )) 
                 self.txtwriter.write("unweighted/prior_loss_var_l1 {}\n".format(prior_loss_var_l1_copy.item() ))
                 self.txtwriter.write("unweighted/prior_loss_var_l2 {}\n".format(prior_loss_var_l2_copy.item() ))
                 self.txtwriter.write("unweighted/loss_r_feature {}\n".format(loss_r_feature_copy.item() ))
                 self.txtwriter.write("unweighted/loss_r_feature_first {}\n".format(loss_r_feature_first_copy.item() )) 
+                # self.txtwriter.write("unweighted/loss_img_stats {}\n".format(loss_img_stats_copy.item()))
                 # self.txtwriter.write("unweighted/loss_r_feature_L0 {}\n".format( self.loss_r_feature_layers[0].r_feature.item()))
                 # self.txtwriter.write("unweighted/loss_r_feature_L1 {}\n".format( self.loss_r_feature_layers[1].r_feature.item()))
                 # self.txtwriter.write("unweighted/loss_r_feature_L2 {}\n".format( self.loss_r_feature_layers[2].r_feature.item()))
                 self.txtwriter.write("unweighted/inputs_norm {}\n".format(inputs_norm.item()))
+                self.txtwriter.write("learning_Rate {}\n".format(float(optimizer.param_groups[0]["lr"])))
 
                 if (iteration % self.display_every) == 0:
                     print("Iteration: {}".format(iteration))
@@ -524,6 +554,7 @@ class DeepInversionClass(object):
                     print("[WEIGHTED] prior_loss_var_l2: ", prior_loss_var_l2.item())
                     print("[WEIGHTED] loss_r_feature", loss_r_feature.item())
                     print("[WEIGHTED] loss_r_feature_first", loss_r_feature_first.item())
+                    # print("[UNWEIGHTED] loss_img_stats", loss_img_stats_copy.item())
                     print("[UNWEIGHTED] inputs_norm", inputs_norm.item())
 
                 # Save to disk
@@ -550,11 +581,11 @@ class DeepInversionClass(object):
 
                     im_boxes_teacher = run_inference(self.net_teacher, im_copy) # Add bounding boxes to generated images
                     im_boxes_verifier= run_inference(self.net_verifier, im_copy) # Add bounding boxes to generated images
-                    self.save_image(
-                        batch_tens =im_boxes_teacher,
-                        loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)), 
-                        halfsize=False
-                    )
+                    # self.save_image(
+                    #     batch_tens =im_boxes_teacher,
+                    #     loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)), 
+                    #     halfsize=False
+                    # )
                     self.save_image(
                         batch_tens =im_boxes_verifier,
                         loc   = os.path.join(self.path, "iteration_verifier_{}.jpg".format(iteration)), 

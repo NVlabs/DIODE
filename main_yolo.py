@@ -44,15 +44,23 @@ def run(args):
     args.resolution = (height, width)
 
     parameters = dict()
-    parameters["resolution"] = args.resolution
+    # Data augmentation params
     parameters["random_label"] = False
     parameters["start_noise"] = True
     parameters["do_flip"] = args.do_flip
     parameters["jitter"] = args.jitter
+    parameters["rand_brightness"] = args.rand_brightness 
+    parameters["rand_contrast"]   = args.rand_contrast
+    parameters["random_erase"]    = args.random_erase
+    parameters["mean_var_clip"] = args.mean_var_clip
+    # Other params
+    parameters["resolution"] = args.resolution
     parameters["bs"] = args.bs 
     parameters["iterations"] = args.iterations
     parameters["save_every"] = args.save_every
     parameters["display_every"] = args.display_every
+    parameters["beta1"] = args.beta1
+    parameters["beta2"] = args.beta2
 
     # criterion = nn.MSELoss()
     # criterion = nn.L1Loss()
@@ -68,6 +76,7 @@ def run(args):
     coefficients["lr"] = args.lr
     coefficients["first_bn_coef"] = args.first_bn_coef
     coefficients["main_loss_multiplier"] = args.main_loss_multiplier
+    coefficients["alpha_img_stats"] = args.alpha_img_stats
 
     network_output_function = lambda x: x # Return output from all branches of Yolo model
 
@@ -93,8 +102,8 @@ def run(args):
     DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mAP: {} \n".format(float(mean_ap_verifier)))
     DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mF1: {} \n".format(float(mean_f1_verifier)))
     _, _, mean_ap_net, mean_f1_net = calculate_metrics(net, imgs, targets)
-    DeepInversionEngine.txtwriter.write("[NET] Real image mAP: {} \n".format(float(mean_ap_verifier)))
-    DeepInversionEngine.txtwriter.write("[NET] Real image mF1: {} \n".format(float(mean_f1_verifier)))
+    DeepInversionEngine.txtwriter.write("[NET] Real image mAP: {} \n".format(float(mean_ap_net)))
+    DeepInversionEngine.txtwriter.write("[NET] Real image mF1: {} \n".format(float(mean_f1_net)))
 
     # TV value for real data 
     from deepinversion_yolo import get_image_prior_losses 
@@ -119,7 +128,9 @@ def run(args):
 
     # random initialized inputs 
     init = torch.rand((DeepInversionEngine.bs, 3, DeepInversionEngine.image_resolution[0], DeepInversionEngine.image_resolution[1]), dtype=torch.float)
+    init = (args.init_scale * init) + args.init_bias
     init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
+    DeepInversionEngine.save_image(init, os.path.join(DeepInversionEngine.path, "initialization.jpg"), halfsize=True)
 
     DeepInversionEngine.generate_batch(targets, init)
 
@@ -132,14 +143,18 @@ def main():
     parser.add_argument('--iterations', default=2000, type=int, help='number of iterations for DI optim')
     parser.add_argument('--bs', default=1, type=int, help='batch size')
     parser.add_argument('--jitter', default=30, type=int, help='jitter')
-    parser.add_argument('--comment', default='', type=str, help='batch size')
+    parser.add_argument('--mean_var_clip', action='store_true', help='clip the optimized image to the mean/var sampled from real data')
     parser.add_argument('--arch_name', default='resnet50', type=str, help='model name from torchvision or resnet50v15')
 
     parser.add_argument('--save_every', type=int, default=100, help='save an image every x iterations')
     parser.add_argument('--display_every', type=int, default=2, help='display the lsses every x iterations')
     parser.add_argument('--path', type=str, default='test', help='where to store experimental data NOT: MUST BE A FOLDER')
 
-    parser.add_argument('--do_flip', action='store_true', help='apply flip for model inversion')
+    parser.add_argument('--do_flip', action='store_true', help='DA:apply flip for model inversion')
+    parser.add_argument("--rand_brightness", action="store_true", help="DA: randomly adjust brightness during optizn")
+    parser.add_argument("--rand_contrast", action="store_true", help="DA: randomly adjust contrast during optizn")
+    parser.add_argument("--random_erase", action="store_true", help="DA: randomly set rectangular regions to 0 during optizn")
+
     parser.add_argument('--r_feature', type=float, default=0.05, help='coefficient for feature distribution regularization')
     parser.add_argument('--tv_l1', type=float, default=0.0, help='coefficient for total variation L1 loss')
     parser.add_argument('--tv_l2', type=float, default=0.0001, help='coefficient for total variation L2 loss')
@@ -147,8 +162,13 @@ def main():
     parser.add_argument('--wd', type=float, default=0.01, help='weight decay for optimization')
     parser.add_argument('--first_bn_coef', type=float, default=0.0, help='additional regularization for the first BN in the networks, coefficient, useful if colors do not match')
     parser.add_argument('--main_loss_multiplier', type=float, default=1.0, help=' coefficient for the main loss optimization')
+    parser.add_argument('--alpha_img_stats', type=float, default=1.0, help='coefficient for loss_img_stats')
     parser.add_argument("--cache_batch_stats", action="store_true", help="use real image stats instead of bnorm mean/var")
     parser.add_argument("--real_mixin_alpha", type=float, default=0.0, help="how much of real image to mix in with the random initialization")
+    parser.add_argument("--init_scale", type=float, default=1.0, help="for scaling the initialization, useful to start with a 'closer to black' kinda image") 
+    parser.add_argument("--init_bias", type=float, default=0.0, help="for biasing the initialization")
+    parser.add_argument("--beta1", type=float, default=0.9, help="beta1 for adam optimizer")
+    parser.add_argument("--beta2", type=float, default=0.999, help="beta1 for adam optimizer")
 
     args = parser.parse_args()
 

@@ -4,6 +4,7 @@ from .utils import labels_to_class_weights, non_max_suppression, plot_one_box, c
 import torch 
 import glob, pickle
 import numpy as np 
+import torchvision
 
 hyp = {'giou': 3.54,  # giou loss gain
        'cls': 37.4,  # cls loss gain
@@ -87,10 +88,10 @@ def run_inference(net, batch_tens):
 def get_model_and_dataloader(batch_size=64, load_pickled=True): 
     
     # params
-    cfg = "./models/yolo/cfg/yolov3-tiny.cfg" 
+    cfg = "./models/yolo/cfg/yolov3.cfg" 
     data = "data/coco2014.data" 
     img_size = 320
-    weights = "./models/yolo/yolov3-tiny.pt"
+    weights = "./models/yolo/yolov3.pt"
     cpu_device = torch.device("cpu")
     gpu_device = torch.device("cuda:0")
     num_workers = 0
@@ -109,7 +110,13 @@ def get_model_and_dataloader(batch_size=64, load_pickled=True):
         imgs = torch.from_numpy(serialized_dict["imgs"]) 
         targets = torch.from_numpy(serialized_dict["targets"]) 
         labels = serialized_dict["labels"]
-        assert imgs.shape[0] == batch_size , "ERROR: pickled data bsize: {} , required bsize: {}".format(imgs.shape[0], batch_size)
+        assert batch_size <= imgs.shape[0], "ERROR: pickled data bsize: {} , required bsize: {}, Insufficient data".format(imgs.shape[0], batch_size)
+        if batch_size < imgs.shape[0]: 
+            import warnings 
+            excess_data_warning_str = "loaded pickled data has bsize: {} , required bsize:  {} , So clipping out extra data".format(imgs.shape[0], batch_size)
+            warnings.warn(excess_data_warning_str)
+            imgs = imgs[0:batch_size]
+            targets = targets[ targets[:,0] < batch_size ] # targets[0,:] = (batch_idx, class, x, y, w, h)
     else: 
         print("Loading seed data from Full Dataloader")
         test_path = "/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt"
@@ -242,9 +249,9 @@ def calculate_metrics(net, imgs, targets):
 
 def get_verifier():
     # params
-    verifier_cfg = "./models/yolo/cfg/yolov3.cfg" 
+    verifier_cfg = "./models/yolo/cfg/yolov3-tiny.cfg" 
     img_size = 320
-    weights = "./models/yolo/yolov3.pt"
+    weights = "./models/yolo/yolov3-tiny.pt"
     cpu_device = torch.device("cpu")
     gpu_device = torch.device("cuda:0")
     num_workers = 0
@@ -339,3 +346,28 @@ def plot_all_boxes(imgs, targets):
     imgs_with_boxes = torch.from_numpy(imgs_np.astype(np.float32) / 255.0)
     
     return imgs_with_boxes
+
+def random_erase_masks(inputs_shape, return_cuda=True):
+    """
+    return a 1/0 mask with random rectangles marked as 0. 
+    shape should match inputs_shape 
+    """ 
+    bs = inputs_shape[0] 
+    height = inputs_shape[2] 
+    width  = inputs_shape[3]
+    masks = []
+    _rand_erase = torchvision.transforms.RandomErasing(
+        p=0.5, 
+        scale=(0.02, 0.2),
+        ratio=(0.3, 3.3), 
+        value=0
+    )
+    for idx in range(bs):
+        mask = torch.ones(3,height,width,dtype=torch.float32)
+        mask = _rand_erase(mask) 
+        masks.append(mask) 
+    masks = torch.stack(masks) 
+    if return_cuda: 
+        masks = masks.cuda()
+    return masks
+
