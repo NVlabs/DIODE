@@ -8,15 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def init_seeds(seed=0):
-    torch.manual_seed(seed)
-
-    # Remove randomness (may be slower on Tesla GPUs) # https://pytorch.org/docs/stable/notes/randomness.html
-    if seed == 0:
-        cudnn.deterministic = True
-        cudnn.benchmark = False
-
-
 def select_device(device='', apex=False, batch_size=None):
     # device = 'cpu' or '0' or '0,1,2,3'
     cpu_request = device.lower() == 'cpu'

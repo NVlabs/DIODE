@@ -14,9 +14,6 @@ import torch.nn as nn
 import torchvision
 from tqdm import tqdm
 
-
-from .torch_utils import init_seeds as torch_utils_init_seeds # , google_utils
-
 matplotlib.rc('font', **{'size': 11})
 
 # Set printoptions
@@ -25,12 +22,6 @@ np.set_printoptions(linewidth=320, formatter={'float_kind': '{:11.5g}'.format}) 
 
 # Prevent OpenCV from multithreading (to use PyTorch DataLoader)
 cv2.setNumThreads(0)
-
-
-def init_seeds(seed=0):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch_utils_init_seeds(seed=seed)
 
 
 def load_classes(path):

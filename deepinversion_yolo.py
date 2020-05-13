@@ -256,8 +256,6 @@ class DeepInversionClass(object):
         
         print("Deep inversion class generation")
 
-        # for reproducibility
-        # torch.manual_seed(torch.cuda.current_device())
         self.net_teacher = net_teacher
         self.net_verifier = net_verifier
         # self.net_teacher = nn.DataParallel(net_teacher, device_ids=[0,1,2], output_device=3)

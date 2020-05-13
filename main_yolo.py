@@ -14,22 +14,24 @@ import numpy as np
 import os, sys 
 import functools
 import random
-# random.seed(0)
 from PIL import Image 
 
 from deepinversion_yolo import DeepInversionClass
-from models.yolo.yolostuff import get_model_and_dataloader, run_inference, calculate_metrics, get_verifier
+from models.yolo.yolostuff import get_model_and_targets, run_inference, calculate_metrics, get_verifier
 
 def create_folder(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
+def set_all_seeds(seeds): 
+    random.seed(seeds[0])
+    np.random.seed(seeds[1])
+    torch.manual_seed(seeds[3])
 
 def run(args):
-    # torch.manual_seed(args.local_rank)
     device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
 
-    net, (imgs, targets), loss_fun = get_model_and_dataloader(batch_size=args.bs, load_pickled=True)
+    net, (imgs, targets), loss_fun = get_model_and_targets(batch_size=args.bs, load_pickled=False, shuffle=args.shuffle, train_txt_path=args.train_txt_path)
     net = net.to(device)
     net_verifier = get_verifier()
     net_verifier = net_verifier.to(device)
@@ -137,6 +139,8 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--local_rank', '--rank', type=int, default=0, help='Rank of the current process.')
+    parser.add_argument('--seeds', type=str, default="0,0,0", help="seeds for built_in random, numpy random and torch.manual_seed")
+    parser.add_argument('--shuffle', action='store_true', help='use shuffle in dataloader')
     parser.add_argument('--no-cuda', action='store_true')
 
     parser.add_argument('--epochs', default=20000, type=int, help='number of epochs?')
@@ -149,6 +153,7 @@ def main():
     parser.add_argument('--save_every', type=int, default=100, help='save an image every x iterations')
     parser.add_argument('--display_every', type=int, default=2, help='display the lsses every x iterations')
     parser.add_argument('--path', type=str, default='test', help='where to store experimental data NOT: MUST BE A FOLDER')
+    parser.add_argument('--train_txt_path', type=str, default='/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt', help='Path to .txt file containing location of images for Dataset')
 
     parser.add_argument('--do_flip', action='store_true', help='DA:apply flip for model inversion')
     parser.add_argument("--rand_brightness", action="store_true", help="DA: randomly adjust brightness during optizn")

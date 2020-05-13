@@ -2,7 +2,7 @@ from .datasets import LoadImagesAndLabels
 from .models import Darknet, compute_loss 
 from .utils import labels_to_class_weights, non_max_suppression, plot_one_box, clip_coords, xywh2xyxy, xyxy2xywh, box_iou, ap_per_class
 import torch 
-import glob, pickle
+import glob, pickle, os
 import numpy as np 
 import torchvision
 
@@ -85,7 +85,9 @@ def run_inference(net, batch_tens):
     return imgs_with_boxes
 
 
-def get_model_and_dataloader(batch_size=64, load_pickled=True): 
+def get_model_and_targets(
+        batch_size=64, load_pickled=True, shuffle=False, 
+        train_txt_path="/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt"):
     
     # params
     cfg = "./models/yolo/cfg/yolov3.cfg" 
@@ -119,18 +121,19 @@ def get_model_and_dataloader(batch_size=64, load_pickled=True):
             targets = targets[ targets[:,0] < batch_size ] # targets[0,:] = (batch_idx, class, x, y, w, h)
     else: 
         print("Loading seed data from Full Dataloader")
-        test_path = "/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt"
-        dataset = LoadImagesAndLabels(test_path, img_size, batch_size,
+        assert os.path.isfile(train_txt_path)
+        dataset = LoadImagesAndLabels(train_txt_path, img_size, batch_size,
                                     augment=False,
                                     hyp=hyp,  # augmentation hyperparameters
                                     rect=False,  # rectangular training
                                     cache_images=False,
+                                    cache_labels=False,
                                     single_cls=False)
 
         dataloader = torch.utils.data.DataLoader(dataset,
                                                 batch_size=batch_size,
                                                 num_workers=num_workers,
-                                                shuffle=False,
+                                                shuffle=shuffle,
                                                 pin_memory=True,
                                                 collate_fn=dataset.collate_fn)
         # Get the data as well
@@ -142,15 +145,16 @@ def get_model_and_dataloader(batch_size=64, load_pickled=True):
             "targets": targets.detach().cpu().numpy(), 
             "labels": labels
             }
-        with open("serialized_dict.pkl", "wb") as f: 
-            pickle.dump(serialized_dict, f)
+        # with open("serialized_dict.pkl", "wb") as f: 
+        #     pickle.dump(serialized_dict, f)
 
     # Attach extras to model
     model.nc = nc  # attach number of classes to model
     model.arc = arc  # attach yolo architecture
     model.hyp = hyp  # attach hyperparameters to model
     model.gr = 0.0  # giou loss ratio (obj_loss = 1.0 or giou)
-    model.class_weights = labels_to_class_weights(labels, nc).to(gpu_device)  # attach class weights
+    # model.class_weights = labels_to_class_weights(labels, nc).to(gpu_device)  # attach class weights
+    # NOTE: class weights isn't used in compute_loss, so I guess its safe to remove it, plus removes dependence on labels
 
     return model, (imgs, targets), compute_loss
 
