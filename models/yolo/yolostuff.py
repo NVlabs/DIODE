@@ -5,6 +5,7 @@ import torch
 import glob, pickle, os
 import numpy as np 
 import torchvision
+from PIL import Image
 
 hyp = {'giou': 3.54,  # giou loss gain
        'cls': 37.4,  # cls loss gain
@@ -112,6 +113,7 @@ def get_model_and_targets(
         imgs = torch.from_numpy(serialized_dict["imgs"]) 
         targets = torch.from_numpy(serialized_dict["targets"]) 
         labels = serialized_dict["labels"]
+        imgspaths = None
         assert batch_size <= imgs.shape[0], "ERROR: pickled data bsize: {} , required bsize: {}, Insufficient data".format(imgs.shape[0], batch_size)
         if batch_size < imgs.shape[0]: 
             import warnings 
@@ -138,7 +140,7 @@ def get_model_and_targets(
                                                 collate_fn=dataset.collate_fn)
         # Get the data as well
         _iter = iter(dataloader)
-        imgs, targets, paths, _ = next(_iter)
+        imgs, targets, imgspaths, _ = next(_iter)
         labels = dataset.labels
         serialized_dict = {
             "imgs": imgs.detach().cpu().numpy(), 
@@ -156,7 +158,7 @@ def get_model_and_targets(
     # model.class_weights = labels_to_class_weights(labels, nc).to(gpu_device)  # attach class weights
     # NOTE: class weights isn't used in compute_loss, so I guess its safe to remove it, plus removes dependence on labels
 
-    return model, (imgs, targets), compute_loss
+    return model, (imgs, targets, imgspaths), compute_loss
 
 def calculate_metrics(net, imgs, targets):
     """
@@ -375,3 +377,30 @@ def random_erase_masks(inputs_shape, return_cuda=True):
         masks = masks.cuda()
     return masks
 
+def convert_to_coco(inputs_tensor, targets):
+    """
+    Convert an inputs_tensor (bsx3x320x320) to #bs images in PIL format
+    Convert targets loaded by a dataloader to plaintxt annotations in coco format
+    """
+    images = inputs_tensor.clone().detach().cpu()
+    images = torch.clamp(images, min=0.0, max=1.0) * 255.0
+    images = images.to(torch.uint8)
+    images = images.numpy()
+    images = np.transpose(images, axes=(0,2,3,1)) # (32, h, w, 3)
+    pil_images = []
+    for batch_idx in range(len(images)):
+        pil_images.append(Image.fromarray(images[batch_idx]))
+
+    targets = targets.clone().detach().cpu()
+    coco_targets = []
+    for batch_idx in range(len(images)):
+        imboxes = targets[targets[:,0]==batch_idx]
+        boxlist = []
+        for box in imboxes:
+            _box_str = "{} {:.6f} {:.6f} {:.6f} {:.6f}\n".format(int(box[1].item()), box[2].item(), box[3].item(), box[4].item(), box[5].item())
+            boxlist.append(_box_str)
+        coco_targets.append(boxlist)
+
+    assert len(coco_targets) == len(pil_images)
+
+    return pil_images, coco_targets

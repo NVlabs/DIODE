@@ -598,6 +598,7 @@ class DeepInversionClass(object):
         # to reduce memory consumption by states of the optimizer
         # optimizer.state = collections.defaultdict(dict)
         self.txtwriter.close()
+        return inputs.clone().detach().cpu()
 
     def save_image(self, batch_tens, loc, halfsize=True): 
         """
@@ -620,12 +621,15 @@ class DeepInversionClass(object):
     def generate_batch(self, targets, init):
         
         self.net_teacher.eval()
-        self.get_images(targets, init)
+        generatedImages = self.get_images(targets, init)
         self.num_generations += 1
 
         # Copy folder from self.path to self.origpath 
         if "NGC_JOB_ID" in os.environ: 
+            print("NGC: Moving folder from {} to {}".format(self.path, self.origpath))
             shutil.move(self.path, self.origpath)
+
+        return generatedImages
 
     def cache_batch_stats(self, imgs): 
         """

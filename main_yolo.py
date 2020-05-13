@@ -17,7 +17,7 @@ import random
 from PIL import Image 
 
 from deepinversion_yolo import DeepInversionClass
-from models.yolo.yolostuff import get_model_and_targets, run_inference, calculate_metrics, get_verifier
+from models.yolo.yolostuff import get_model_and_targets, run_inference, calculate_metrics, get_verifier, convert_to_coco
 
 def create_folder(directory):
     if not os.path.exists(directory):
@@ -31,7 +31,7 @@ def set_all_seeds(seeds):
 def run(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
 
-    net, (imgs, targets), loss_fun = get_model_and_targets(batch_size=args.bs, load_pickled=False, shuffle=args.shuffle, train_txt_path=args.train_txt_path)
+    net, (imgs, targets, imgspaths), loss_fun = get_model_and_targets(batch_size=args.bs, load_pickled=False, shuffle=args.shuffle, train_txt_path=args.train_txt_path)
     net = net.to(device)
     net_verifier = get_verifier()
     net_verifier = net_verifier.to(device)
@@ -134,7 +134,18 @@ def run(args):
     init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
     DeepInversionEngine.save_image(init, os.path.join(DeepInversionEngine.path, "initialization.jpg"), halfsize=True)
 
-    DeepInversionEngine.generate_batch(targets, init)
+    generatedImages = DeepInversionEngine.generate_batch(targets, init)
+
+    # Store generatedImages in coco format
+    os.makedirs(os.path.join(args.path, "coco", "images", "train2014"))
+    os.makedirs(os.path.join(args.path, "coco", "labels", "train2014"))
+    pilImages, cocoTargets = convert_to_coco(generatedImages, targets)
+    for pilim, cocotarget, imgpath in zip(pilImages, cocoTargets, imgspaths):
+        imgpath = os.path.basename(imgpath)
+        pilim.save(os.path.join(args.path, "coco", "images", "train2014", imgpath))
+        with open(os.path.join(args.path,"coco","labels","train2014",imgpath.replace(".jpg",".txt")),"wt") as f:
+            if len(cocotarget)>0:
+                f.write(''.join(cocotarget).rstrip('\n'))
 
 def main():
     parser = argparse.ArgumentParser()
