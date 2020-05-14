@@ -146,6 +146,9 @@ def run(args):
         with open(os.path.join(args.path,"coco","labels","train2014",imgpath.replace(".jpg",".txt")),"wt") as f:
             if len(cocotarget)>0:
                 f.write(''.join(cocotarget).rstrip('\n'))
+    # Save the args
+    with open(os.path.join(args.path, "args.txt"), "wt") as f:
+        f.write(str(args)+"\n")
 
 def main():
     parser = argparse.ArgumentParser()
