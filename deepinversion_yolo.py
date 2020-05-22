@@ -6,6 +6,7 @@ from utils_di import create_folder, Logger
 import random, shutil
 import torch
 import torchvision.utils as vutils
+from apex import amp
 from PIL import Image
 
 import numpy as np
@@ -105,8 +106,8 @@ class DeepInversionFeatureHook():
                 self.cached_var  = module.running_var.data.clone().detach()     
                 self.cached_mean = module.running_mean.data.clone().detach() 
 
-            r_feature = torch.norm(self.cached_var - std, 1) + torch.norm(
-                self.cached_mean - mean, 1)
+            r_feature = torch.norm(self.cached_var.type(std.dtype) - std, 1) + torch.norm(
+                self.cached_mean.type(mean.dtype) - mean, 1)
             # r_feature = torch.norm(module.running_var.data - std, 2) + torch.norm(
             #     module.running_mean.data - mean, 2)
         else:
@@ -165,13 +166,10 @@ def clip(image_tensor, use_amp=False):
     '''
     adjust the input based on mean and variance
     '''
+    mean = np.array([0.48853, 0.48853, 0.48853])
+    std = np.array([0.08215 ** 0.5, 0.08215 ** 0.5, 0.08215 ** 0.5])
     if use_amp:
-        raise NotImplementedError
-        mean = np.array([0.485, 0.456, 0.406], dtype=np.float16)
-        std = np.array([0.229, 0.224, 0.225], dtype=np.float16)
-    else:
-        mean = np.array([0.48853, 0.48853, 0.48853])
-        std = np.array([0.08215 ** 0.5, 0.08215 ** 0.5, 0.08215 ** 0.5])
+        mean, std = mean.astype(np.float16), std.astype(np.float16)
 
     for c in range(3):
         m, s = mean[c], std[c]
@@ -217,6 +215,7 @@ class DeepInversionClass(object):
                  logger_big=None,
                  parameters=dict(),
                  criterion=None,
+                 use_amp=False,
                  coefficients=dict(),
                  network_output_function=lambda x: x):
         '''
@@ -290,6 +289,7 @@ class DeepInversionClass(object):
         self.first_bn_coef = coefficients["first_bn_coef"]
         self.main_loss_multiplier = coefficients["main_loss_multiplier"]
         self.alpha_img_stats = coefficients["alpha_img_stats"]
+        self.use_amp = use_amp
         
         # Log to tmp if on NGC
         if "NGC_JOB_ID" in os.environ: 
@@ -326,7 +326,6 @@ class DeepInversionClass(object):
     def get_images(self, targets, init):
         
         print("get_images call")
-
         net_teacher = self.net_teacher
         net_teacher.eval()
         save_every = self.save_every
@@ -345,6 +344,9 @@ class DeepInversionClass(object):
         lr_scheduler = lr_cosine_policy(self.lr, 100, self.iterations)
         # beta0_scheduler = mom_cosine_policy(0.9, 250, self.iterations)
         # beta1_scheduler = mom_cosine_policy(0.999, 250, self.iterations)
+        if self.use_amp:
+            net_teacher, optimizer = amp.initialize(net_teacher, optimizer, opt_level="O1")
+            self.net_verifier, _   = amp.initialize(self.net_verifier, [], opt_level="O1")
 
         for iteration in range(1,self.iterations+1):
             
@@ -354,7 +356,7 @@ class DeepInversionClass(object):
             # beta1_scheduler(optimizer, iteration, iteration, "betas", 1)
 
             if self.mean_var_clip:
-                inputs.data = clip(inputs.data, use_amp=False)
+                inputs.data = clip(inputs.data, use_amp=self.use_amp)
 
             inputs_jit = inputs 
             targets_jit = targets.clone().detach() 
@@ -432,7 +434,11 @@ class DeepInversionClass(object):
             # do image update
             optimizer.zero_grad()
             net_teacher.zero_grad()
-            total_loss.backward() 
+            if self.use_amp:
+                with amp.scale_loss(total_loss, optimizer) as total_loss_scaled:
+                    total_loss_scaled.backward()
+            else:
+                total_loss.backward()
             optimizer.step()
             
             # Write logs to tensorboard

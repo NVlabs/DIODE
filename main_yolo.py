@@ -88,6 +88,7 @@ def run(args):
                                              logger_big=None,
                                              parameters=parameters,
                                              criterion=criterion,
+                                             use_amp=args.fp16,
                                              coefficients = coefficients,
                                              network_output_function = network_output_function)
 
@@ -167,6 +168,7 @@ def main():
     parser.add_argument('--display_every', type=int, default=2, help='display the lsses every x iterations')
     parser.add_argument('--path', type=str, default='test', help='where to store experimental data NOT: MUST BE A FOLDER')
     parser.add_argument('--train_txt_path', type=str, default='/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt', help='Path to .txt file containing location of images for Dataset')
+    parser.add_argument('--fp16', action="store_true", help="Enabled Mixed Precision Training")
 
     parser.add_argument('--do_flip', action='store_true', help='DA:apply flip for model inversion')
     parser.add_argument("--rand_brightness", action="store_true", help="DA: randomly adjust brightness during optizn")
