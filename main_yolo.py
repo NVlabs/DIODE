@@ -80,7 +80,7 @@ def run(args):
     coefficients["main_loss_multiplier"] = args.main_loss_multiplier
     coefficients["alpha_img_stats"] = args.alpha_img_stats
 
-    network_output_function = lambda x: x # Return output from all branches of Yolo model
+    network_output_function = lambda x: x[1] # When in .eval() mode, DarkNet returns (inference_output, training_output). 
 
     DeepInversionEngine = DeepInversionClass(net_teacher=net,
                                              net_verifier=net_verifier,

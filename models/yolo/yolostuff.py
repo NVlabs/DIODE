@@ -37,12 +37,6 @@ def run_inference(net, batch_tens):
     with open("./models/yolo/colors.pkl", "rb") as f: 
         colors = pickle.load(f) 
 
-    # Enable inference 
-    net.inference_enabled = True
-    for mdef, module in zip(net.module_defs, net.module_list): 
-        if mdef["type"] == "yolo": 
-            module.inference_enabled = True
-
     # Inference
     with torch.no_grad():
         pred = net(imgs)[0] # (batchsize, bboxes, 85) 
@@ -73,12 +67,6 @@ def run_inference(net, batch_tens):
         imgs_with_boxes.append(np.transpose(img_np, axes=(2,0,1)))
     imgs_with_boxes = np.array(imgs_with_boxes).astype(np.float32) / 255.0 
     imgs_with_boxes = torch.from_numpy(imgs_with_boxes) 
-    
-    # Disable inference 
-    net.inference_enabled = False
-    for mdef, module in zip(net.module_defs, net.module_list): 
-        if mdef["type"] == "yolo": 
-            module.inference_enabled = False
     
     del pred 
     torch.cuda.empty_cache()
@@ -168,10 +156,6 @@ def calculate_metrics(net, imgs, targets):
 
     # Enable inference
     net.eval()
-    net.inference_enabled = True
-    for mdef, module in zip(net.module_defs, net.module_list):
-        if mdef["type"] == "yolo":
-            module.inference_enabled = True
 
     # Inference
     with torch.no_grad():
@@ -241,12 +225,6 @@ def calculate_metrics(net, imgs, targets):
 
     # print("MP: {} MR: {} MAP: {} MF1: {}".format(mp, mr, map, mf1))
     # print("Number of targets per class: {}".format(nt))
-
-    # Disable inference
-    net.inference_enabled = False
-    for mdef, module in zip(net.module_defs, net.module_list):
-        if mdef["type"] == "yolo":
-            module.inference_enabled = False
 
     # save memory 
     del output, preds

@@ -186,8 +186,6 @@ class YOLOLayer(nn.Module):
         self.nx = 0  # initialize number of x gridpoints
         self.ny = 0  # initialize number of y gridpoints
 
-        self.inference_enabled = False # Special for DeepInversion
-
         if ONNX_EXPORT:
             stride = [32, 16, 8][yolo_index]  # stride of this layer
             nx = img_size[1] // stride  # number x grid points
@@ -225,9 +223,9 @@ class YOLOLayer(nn.Module):
         # p.view(bs, 255, 13, 13) -- > (bs, 3, 13, 13, 85)  # (bs, anchors, grid, grid, classes + xywh)
         p = p.view(bs, self.na, self.no, self.ny, self.nx).permute(0, 1, 3, 4, 2).contiguous()  # prediction
 
-        # MODIFIED FOR DEEPINVERSION (since in DI we need just raw outputs even during eval phase)
-        if not self.inference_enabled: 
-            return p 
+        if self.training:
+            return p
+
         else:  # inference
             io = p.clone()  # inference output
             io[..., :2] = torch.sigmoid(io[..., :2]) + self.grid_xy  # xy
@@ -235,31 +233,6 @@ class YOLOLayer(nn.Module):
             io[..., :4] *= self.stride
             torch.sigmoid_(io[..., 4:])
             return io.view(bs, -1, self.no), p  # view [1, 3, 13, 13, 85] as [1, 507, 85]
-
-        # if self.training:
-        #     return p
-
-        # elif ONNX_EXPORT:
-        #     # Avoid broadcasting for ANE operations
-        #     m = self.na * self.nx * self.ny
-        #     ng = 1 / self.ng.repeat((m, 1))
-        #     grid_xy = self.grid_xy.repeat((1, self.na, 1, 1, 1)).view(m, 2)
-        #     anchor_wh = self.anchor_wh.repeat((1, 1, self.nx, self.ny, 1)).view(m, 2) * ng
-
-        #     p = p.view(m, self.no)
-        #     xy = torch.sigmoid(p[:, 0:2]) + grid_xy  # x, y
-        #     wh = torch.exp(p[:, 2:4]) * anchor_wh  # width, height
-        #     p_cls = torch.sigmoid(p[:, 4:5]) if self.nc == 1 else \
-        #         torch.sigmoid(p[:, 5:self.no]) * torch.sigmoid(p[:, 4:5])  # conf
-        #     return p_cls, xy * ng, wh
-
-        # else:  # inference
-        #     io = p.clone()  # inference output
-        #     io[..., :2] = torch.sigmoid(io[..., :2]) + self.grid_xy  # xy
-        #     io[..., 2:4] = torch.exp(io[..., 2:4]) * self.anchor_wh  # wh yolo method
-        #     io[..., :4] *= self.stride
-        #     torch.sigmoid_(io[..., 4:])
-        #     return io.view(bs, -1, self.no), p  # view [1, 3, 13, 13, 85] as [1, 507, 85]
 
 
 class Darknet(nn.Module):
@@ -277,8 +250,6 @@ class Darknet(nn.Module):
         self.seen = np.array([0], dtype=np.int64)  # (int64) number of images seen during training
         self.info()  # print model description
 
-        # Special for DeepInversion 
-        self.inference_enabled = False 
 
     def forward(self, x, verbose=False):
         img_size = x.shape[-2:]
@@ -319,21 +290,12 @@ class Darknet(nn.Module):
                 print('%g/%g %s -' % (i, len(self.module_list), mtype), list(x.shape), str)
                 str = ''
 
-        # MODIFIED FOR DEEPINVERSION (since we need just output (not inf) even during eval phase)
-        if not self.inference_enabled:
+        if self.training:  # train
             return yolo_out
         else:  # test
-            io, p = zip(*yolo_out)  # inference output, training output
-            return torch.cat(io, 1), p
-        
-        # if self.training:  # train
-        #     return yolo_out
-        # elif ONNX_EXPORT:  # export
-        #     x = [torch.cat(x, 0) for x in zip(*yolo_out)]
-        #     return x[0], torch.cat(x[1:3], 1)  # scores, boxes: 3780x80, 3780x4
-        # else:  # test
-        #     io, p = zip(*yolo_out)  # inference output, training output
-        #     return torch.cat(io, 1), p
+            x, p = zip(*yolo_out)  # inference output, training output
+            x    = torch.cat(x, 1)
+            return x, p
 
     def fuse(self):
         # Fuse Conv2d + BatchNorm2d layers throughout model
