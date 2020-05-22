@@ -87,7 +87,6 @@ def run(args):
                                              path=args.path,
                                              logger_big=None,
                                              parameters=parameters,
-                                             setting_id=1, # no low-resolutio optim, only original resolution optimization
                                              criterion=criterion,
                                              coefficients = coefficients,
                                              network_output_function = network_output_function)

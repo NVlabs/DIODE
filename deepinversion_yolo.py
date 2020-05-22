@@ -216,7 +216,6 @@ class DeepInversionClass(object):
                  net_teacher=None, net_verifier=None, path="./temp/",
                  logger_big=None,
                  parameters=dict(),
-                 setting_id=0,
                  criterion=None,
                  coefficients=dict(),
                  network_output_function=lambda x: x):
@@ -258,20 +257,11 @@ class DeepInversionClass(object):
 
         self.net_teacher = net_teacher
         self.net_verifier = net_verifier
-        # self.net_teacher = nn.DataParallel(net_teacher, device_ids=[0,1,2], output_device=3)
 
-        if "resolution" in parameters.keys():
-            self.image_resolution = parameters["resolution"]
-            self.random_label = parameters["random_label"]
-            self.start_noise = parameters["start_noise"]
-            self.do_flip = parameters["do_flip"]
-        else:
-            self.image_resolution = (608,960)
-            self.random_label = False
-            self.start_noise = True
-            self.do_flip = False
-
-        self.setting_id = setting_id
+        self.image_resolution = parameters["resolution"]
+        self.random_label = parameters["random_label"]
+        self.start_noise = parameters["start_noise"]
+        self.do_flip = parameters["do_flip"]
 
         self.bs = parameters["bs"]  # batch size
         self.iterations = parameters["iterations"]
@@ -292,21 +282,14 @@ class DeepInversionClass(object):
 
         self.network_output_function = network_output_function
 
-        if "r_feature" in coefficients:
-            self.bn_reg_scale = coefficients["r_feature"]
-            self.var_scale_l1 = coefficients["tv_l1"]
-            self.var_scale_l2 = coefficients["tv_l2"]
-            self.wd_coeff = coefficients["wd"]
-            self.lr = coefficients["lr"]
-            self.first_bn_coef = coefficients["first_bn_coef"]
-            self.main_loss_multiplier = coefficients["main_loss_multiplier"]
-            self.alpha_img_stats = coefficients["alpha_img_stats"]
-        else:
-            print("Provide a dictionary with ")
-
-        self.num_generations = 0
-
-        local_rank = torch.cuda.current_device()
+        self.bn_reg_scale = coefficients["r_feature"]
+        self.var_scale_l1 = coefficients["tv_l1"]
+        self.var_scale_l2 = coefficients["tv_l2"]
+        self.wd_coeff = coefficients["wd"]
+        self.lr = coefficients["lr"]
+        self.first_bn_coef = coefficients["first_bn_coef"]
+        self.main_loss_multiplier = coefficients["main_loss_multiplier"]
+        self.alpha_img_stats = coefficients["alpha_img_stats"]
         
         # Log to tmp if on NGC
         if "NGC_JOB_ID" in os.environ: 
@@ -327,16 +310,11 @@ class DeepInversionClass(object):
         with open(os.path.join(self.path, "coefficients.json"), "wt") as fp: 
             json.dump(coefficients, fp)
 
-        
-        self.loss_r_feature_layers = []
-
         # Add hooks for Batchnorm layers
+        self.loss_r_feature_layers = []
         for module in self.net_teacher.modules():
             if isinstance(module, nn.BatchNorm2d):
                 self.loss_r_feature_layers.append(DeepInversionFeatureHook(module))
-        # for module in self.net_teacher.modules():
-        #     if isinstance(module, nn.BatchNorm2d):
-        #         self.loss_r_feature_layers.append(DeepInversionFeatureHook_fullfeatmse(module))
         
         # Logging 
         self.writer = SummaryWriter(os.path.join(self.path, "logs"))
@@ -352,247 +330,207 @@ class DeepInversionClass(object):
         net_teacher = self.net_teacher
         net_teacher.eval()
         save_every = self.save_every
-        local_rank = torch.cuda.current_device()
         best_cost = 1e4
-        # set up criteria
         criterion = self.criterion
-
-        # setup target labels
         img_original = self.image_resolution
-        
 
         # Setup input (which will be optimized)
         gpu_device = torch.device("cuda:0")
         inputs = init.clone().detach().to(gpu_device).requires_grad_(True)
         targets = targets.to(gpu_device)
-        print(inputs.shape, targets.shape)
+        print("Inputs shape: {} Targets shape: {}".format(inputs.shape, targets.shape))
         
-        poolingmod = nn.modules.pooling.AvgPool2d(kernel_size=2)
 
-        if self.setting_id==0:
-            skipfirst = False
-        else:
-            skipfirst = True
+        optimizer = optim.Adam([inputs], lr=self.lr, betas=[self.beta1, self.beta2], weight_decay=self.wd_coeff)
+        lr_scheduler = lr_cosine_policy(self.lr, 100, self.iterations)
+        # beta0_scheduler = mom_cosine_policy(0.9, 250, self.iterations)
+        # beta1_scheduler = mom_cosine_policy(0.999, 250, self.iterations)
 
-        iteration = 0
-        for lr_it, lower_res in enumerate([2, 1]):
-            if lr_it==0:
-                iterations_per_layer = self.iterations
-                # iterations_per_layer = 1000
-            else:
-                if not skipfirst:
-                    iterations_per_layer = self.iterations // 2 
-                else:
-                    iterations_per_layer = self.iterations
-
-            if lr_it==0 and skipfirst:
-                continue
-
-            lim_0, lim_1 = self.jitter // lower_res, self.jitter // lower_res
-            # img_res = img_original // lower_res
-
-            optimizer = optim.Adam([inputs], lr=self.lr, betas=[self.beta1, self.beta2], weight_decay=self.wd_coeff)
-            # optimizer = optim.SGD([inputs], lr=self.lr)
-            # optimizer = optim.Adam([inputs], lr=self.lr, betas=[0.0, 0.0])
-            ## optimization is the weakest point of algorithm. Sometimes, settings betas to zero helps optimization
-            ## also there are beta schedulers latter.
-            # optimizer = optim.AdamW([inputs], lr=self.lr, betas=[0.0, 0.0], weight_decay=self.wd_coeff)
-
-            lr_scheduler = lr_cosine_policy(self.lr, 100, iterations_per_layer)
-
-            # beta0_scheduler = mom_cosine_policy(0.9, 250, iterations_per_layer)
-            # beta1_scheduler = mom_cosine_policy(0.999, 250, iterations_per_layer)
-
-            for iteration_loc in range(iterations_per_layer):
-                
-                iteration += 1
-                # print("iteration: {}".format(iteration))
-                # apply random jitter offsets
-                off1 = random.randint(-lim_0, lim_0)
-                off2 = random.randint(-lim_1, lim_1)
-
-                lr_scheduler(optimizer, iteration_loc, iteration_loc)
-                # beta0_scheduler(optimizer, iteration_loc, iteration_loc, "betas", 0)
-                # beta1_scheduler(optimizer, iteration_loc, iteration_loc, "betas", 1)
-
-                if self.mean_var_clip:
-                    inputs.data = clip(inputs.data, use_amp=False)
-
-                if lower_res!=1:
-                    inputs_jit = poolingmod(inputs)
-                else:
-                    inputs_jit = inputs 
-
-                targets_jit = targets.clone().detach() 
-                inputs_jit = torch.roll(inputs_jit, shifts=(off1, off2), dims=(2, 3))
-                if any([off1, off2]):
-                    height, width = inputs_jit.shape[2], inputs_jit.shape[3]
-                    targets_jit = jitter_targets(targets_jit, off2, off1, img_shape=(width, height))
-
-                flip = random.random() > 0.5
-                if flip and self.do_flip:
-                    inputs_jit = torch.flip(inputs_jit, dims=(3,))
-                    targets_jit = flip_targets(targets_jit, horizontal=True, vertical=False)
-                
-                # Random brightness & contrast
-                if self.rand_brightness:
-                    rand_brightness = torch.randn(inputs_jit.shape[0], 1, 1,1).cuda() * 0.2
-                    inputs_jit += rand_brightness
-                if self.rand_contrast:
-                    rand_contrast   =  1.0 + torch.randn(inputs_jit.shape[0], 1, 1,1).cuda() * 0.1 
-                    inputs_jit *= rand_contrast
-                
-                # Random erase mask 
-                if self.random_erase:
-                    masks = random_erase_masks(inputs_jit.shape, return_cuda=True) 
-                    inputs_jit *= masks
-
-                # foward with jit images
-                inputs_jit = torch.clamp(inputs_jit, min=0.0, max=1.0)
-                outputs = net_teacher(inputs_jit)
-
-                outputs = self.network_output_function(outputs)
-
-                # R_cross classification loss NOTE: MODIFIED FOR YOLO
-                task_loss, _ = criterion(outputs, targets_jit, net_teacher)
-                task_loss_copy = task_loss.clone().detach()
-                task_loss = self.main_loss_multiplier * task_loss 
-
-                # R_prior losses
-                prior_loss_var_l1, prior_loss_var_l2 = get_image_prior_losses(inputs_jit)
-                prior_loss_var_l1_copy = prior_loss_var_l1.clone().detach()
-                prior_loss_var_l2_copy = prior_loss_var_l2.clone().detach()
-                prior_loss_var_l1 = self.var_scale_l1 * prior_loss_var_l1 
-                prior_loss_var_l2 = self.var_scale_l2 * prior_loss_var_l2 
-
-                # R_feature loss 
-                loss_r_feature = sum([mod.r_feature for mod in self.loss_r_feature_layers])
-                loss_r_feature_copy = loss_r_feature.clone().detach()
-                loss_r_feature = self.bn_reg_scale * loss_r_feature 
-                
-                # R_feature loss layer_1
-                loss_r_feature_first = sum([mod.r_feature for mod in self.loss_r_feature_layers[:1]])
-                loss_r_feature_first_copy = loss_r_feature_first.clone().detach()
-                loss_r_feature_first = self.first_bn_coef * loss_r_feature_first 
-
-                # # Match image stats
-                # img_mean = inputs_jit.mean([2, 3])
-                # img_std = inputs_jit.std([2,3])
-                # # print(img_mean.mean([0]), img_std.mean([0]))
-                # natural_image_mean = torch.tensor([0.51965, 0.49869, 0.44715]).cuda()
-                # natural_image_std = torch.tensor([0.24281, 0.23689, 0.24182]).cuda()
-                # loss_img_stats = torch.norm(img_mean - natural_image_mean, 2, dim=1).mean() + \
-                #                              torch.norm(img_std - natural_image_std, 2, dim=1).mean()
-                # loss_img_stats_copy = loss_img_stats.clone().detach()
-                # loss_img_stats *= self.alpha_img_stats
-
-                total_loss = task_loss + prior_loss_var_l1 + prior_loss_var_l2 + loss_r_feature + loss_r_feature_first # + loss_img_stats
-
-                # To check if weight decay is working 
-                inputs_norm = torch.norm(inputs) / inputs.shape[0] 
-
-                # do image update
-                optimizer.zero_grad()
-                net_teacher.zero_grad()
-                total_loss.backward() 
-                optimizer.step()
-                
-                # Write logs to tensorboard
-
-                # Weighted Loss
-                self.writer.add_scalar("weighted/total_loss", total_loss.item(), iteration)
-                self.writer.add_scalar("weighted/task_loss", task_loss.item(), iteration)
-                self.writer.add_scalar("weighted/prior_loss_var_l1", prior_loss_var_l1.item(), iteration)
-                self.writer.add_scalar("weighted/prior_loss_var_l2", prior_loss_var_l2.item(), iteration)
-                self.writer.add_scalar("weighted/loss_r_feature", loss_r_feature.item(), iteration)
-                self.writer.add_scalar("weighted/loss_r_feature_first", loss_r_feature_first.item(), iteration)
-                # self.writer.add_scalar("weighted/loss_img_stats", loss_img_stats.item(), iteration)
-                # Unweighted loss
-                self.writer.add_scalar("unweighted/task_loss", task_loss_copy.item() , iteration)
-                self.writer.add_scalar("unweighted/prior_loss_var_l1", prior_loss_var_l1_copy.item() , iteration)
-                self.writer.add_scalar("unweighted/prior_loss_var_l2", prior_loss_var_l2_copy.item() , iteration)
-                self.writer.add_scalar("unweighted/loss_r_feature", loss_r_feature_copy.item() , iteration)
-                self.writer.add_scalar("unweighted/loss_r_feature_first", loss_r_feature_first_copy.item() , iteration) 
-                # self.writer.add_scalar("unweighted/loss_img_stats", loss_img_stats_copy.item(), iteration)
-                # self.writer.add_scalar("unweighted/loss_r_feature_L0", self.loss_r_feature_layers[0].r_feature.item(), iteration)
-                # self.writer.add_scalar("unweighted/loss_r_feature_L1", self.loss_r_feature_layers[1].r_feature.item(), iteration)
-                # self.writer.add_scalar("unweighted/loss_r_feature_L2", self.loss_r_feature_layers[2].r_feature.item(), iteration)
-                self.writer.add_scalar("unweighted/inputs_norm", inputs_norm.item(), iteration) 
-                self.writer.add_scalar("learning_rate", float(optimizer.param_groups[0]["lr"]), iteration)
+        for iteration in range(1,self.iterations+1):
             
-                # Write logs to txt file 
-                # weighted
-                self.txtwriter.write("-"*50 + "\n")
-                self.txtwriter.write("ITERATION: {}\n".format(iteration))
-                self.txtwriter.write("weighted/total_loss {}\n".format(total_loss.item()))
-                self.txtwriter.write("weighted/task_loss {}\n".format(task_loss.item())) 
-                self.txtwriter.write("weighted/prior_loss_var_l1 {}\n".format(prior_loss_var_l1.item()))
-                self.txtwriter.write("weighted/prior_loss_var_l2 {}\n".format(prior_loss_var_l2.item()))
-                self.txtwriter.write("weighted/loss_r_feature {}\n".format(loss_r_feature.item()))
-                self.txtwriter.write("weighted/loss_r_feature_first {}\n".format(loss_r_feature_first.item()))
-                # self.txtwriter.write("weighted/loss_img_stats {}\n".format(loss_img_stats.item()))
-                # unweighted
-                self.txtwriter.write("unweighted/task_loss {}\n".format(task_loss_copy.item() )) 
-                self.txtwriter.write("unweighted/prior_loss_var_l1 {}\n".format(prior_loss_var_l1_copy.item() ))
-                self.txtwriter.write("unweighted/prior_loss_var_l2 {}\n".format(prior_loss_var_l2_copy.item() ))
-                self.txtwriter.write("unweighted/loss_r_feature {}\n".format(loss_r_feature_copy.item() ))
-                self.txtwriter.write("unweighted/loss_r_feature_first {}\n".format(loss_r_feature_first_copy.item() )) 
-                # self.txtwriter.write("unweighted/loss_img_stats {}\n".format(loss_img_stats_copy.item()))
-                # self.txtwriter.write("unweighted/loss_r_feature_L0 {}\n".format( self.loss_r_feature_layers[0].r_feature.item()))
-                # self.txtwriter.write("unweighted/loss_r_feature_L1 {}\n".format( self.loss_r_feature_layers[1].r_feature.item()))
-                # self.txtwriter.write("unweighted/loss_r_feature_L2 {}\n".format( self.loss_r_feature_layers[2].r_feature.item()))
-                self.txtwriter.write("unweighted/inputs_norm {}\n".format(inputs_norm.item()))
-                self.txtwriter.write("learning_Rate {}\n".format(float(optimizer.param_groups[0]["lr"])))
+            # print("iteration: {}".format(iteration))
+            lr_scheduler(optimizer, iteration, iteration)
+            # beta0_scheduler(optimizer, iteration, iteration, "betas", 0)
+            # beta1_scheduler(optimizer, iteration, iteration, "betas", 1)
 
-                if (iteration % self.display_every) == 0:
-                    print("Iteration: {}".format(iteration))
-                    print("[WEIGHTED] total loss", total_loss.item())
-                    print("[WEIGHTED] task_loss", task_loss.item())
-                    print("[WEIGHTED] prior_loss_var_l1: ", prior_loss_var_l1.item())
-                    print("[WEIGHTED] prior_loss_var_l2: ", prior_loss_var_l2.item())
-                    print("[WEIGHTED] loss_r_feature", loss_r_feature.item())
-                    print("[WEIGHTED] loss_r_feature_first", loss_r_feature_first.item())
-                    # print("[UNWEIGHTED] loss_img_stats", loss_img_stats_copy.item())
-                    print("[UNWEIGHTED] inputs_norm", inputs_norm.item())
+            if self.mean_var_clip:
+                inputs.data = clip(inputs.data, use_amp=False)
 
-                # Save to disk
-                if (iteration % self.save_every) == 0: 
-                    im_copy = inputs.clone().detach().cpu()
+            inputs_jit = inputs 
+            targets_jit = targets.clone().detach() 
 
-                    # compute metrics (mp, mr, map, mf1) for the updated image on net_verifier
-                    _, _, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets)
-                    self.writer.add_scalar("unweighted/mAP VERIFIER", float(mean_ap), iteration)
-                    self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mean_f1), iteration)
-                    self.txtwriter.write("unweighted/mAP VERIFIER {}\n".format(float(mean_ap)))
-                    self.txtwriter.write("unweighted/mF1 VERIFIER {}\n".format(float(mean_f1)))
-                    print("[UNWEIGHTED] mAP VERIFIER {}".format(mean_ap))
-                    print("[UNWEIGHTED] mF1 VERIFIER {}".format(mean_f1))
+            # Random Jitter 
+            off1, off2 = random.randint(-self.jitter, self.jitter), random.randint(-self.jitter, self.jitter)
+            inputs_jit = torch.roll(inputs_jit, shifts=(off1, off2), dims=(2, 3))
+            if any([off1, off2]):
+                height, width = inputs_jit.shape[2], inputs_jit.shape[3]
+                targets_jit = jitter_targets(targets_jit, off2, off1, img_shape=(width, height))
 
-                    # compute metrics (mp, mr, map, mf1) for the updated image on net_teacher
-                    _, _, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets)
-                    self.writer.add_scalar("unweighted/mAP TEACHER", float(mean_ap), iteration)
-                    self.writer.add_scalar("unweighted/mF1 TEACHER", float(mean_f1), iteration)
-                    self.txtwriter.write("unweighted/mAP TEACHER {}\n".format(float(mean_ap)))
-                    self.txtwriter.write("unweighted/mF1 TEACHER {}\n".format(float(mean_f1)))
-                    print("[UNWEIGHTED] mAP TEACHER {}".format(mean_ap))
-                    print("[UNWEIGHTED] mF1 TEACHER {}".format(mean_f1))
+            # Random horizontal flips
+            flip = random.random() > 0.5
+            if flip and self.do_flip:
+                inputs_jit = torch.flip(inputs_jit, dims=(3,))
+                targets_jit = flip_targets(targets_jit, horizontal=True, vertical=False)
+            
+            # Random brightness & contrast
+            if self.rand_brightness:
+                rand_brightness = torch.randn(inputs_jit.shape[0], 1, 1,1).cuda() * 0.2
+                inputs_jit += rand_brightness
+            if self.rand_contrast:
+                rand_contrast   =  1.0 + torch.randn(inputs_jit.shape[0], 1, 1,1).cuda() * 0.1 
+                inputs_jit *= rand_contrast
+            
+            # Random erase mask 
+            if self.random_erase:
+                masks = random_erase_masks(inputs_jit.shape, return_cuda=True) 
+                inputs_jit *= masks
 
-                    im_boxes_teacher = run_inference(self.net_teacher, im_copy) # Add bounding boxes to generated images
-                    im_boxes_verifier= run_inference(self.net_verifier, im_copy) # Add bounding boxes to generated images
-                    # self.save_image(
-                    #     batch_tens =im_boxes_teacher,
-                    #     loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)), 
-                    #     halfsize=False
-                    # )
-                    self.save_image(
-                        batch_tens =im_boxes_verifier,
-                        loc   = os.path.join(self.path, "iteration_verifier_{}.jpg".format(iteration)), 
-                        halfsize=False
-                    )
-                    del im_copy, im_boxes_teacher, im_boxes_verifier
-                    torch.cuda.empty_cache()
+            # foward with jit images
+            inputs_jit = torch.clamp(inputs_jit, min=0.0, max=1.0)
+            outputs = net_teacher(inputs_jit)
 
-                # optimizer.state = collections.defaultdict(dict)
+            outputs = self.network_output_function(outputs)
+
+            # R_cross classification loss NOTE: MODIFIED FOR YOLO
+            task_loss, _ = criterion(outputs, targets_jit, net_teacher)
+            task_loss_copy = task_loss.clone().detach()
+            task_loss = self.main_loss_multiplier * task_loss 
+
+            # R_prior losses
+            prior_loss_var_l1, prior_loss_var_l2 = get_image_prior_losses(inputs_jit)
+            prior_loss_var_l1_copy = prior_loss_var_l1.clone().detach()
+            prior_loss_var_l2_copy = prior_loss_var_l2.clone().detach()
+            prior_loss_var_l1 = self.var_scale_l1 * prior_loss_var_l1 
+            prior_loss_var_l2 = self.var_scale_l2 * prior_loss_var_l2 
+
+            # R_feature loss 
+            loss_r_feature = sum([mod.r_feature for mod in self.loss_r_feature_layers])
+            loss_r_feature_copy = loss_r_feature.clone().detach()
+            loss_r_feature = self.bn_reg_scale * loss_r_feature 
+            
+            # R_feature loss layer_1
+            loss_r_feature_first = sum([mod.r_feature for mod in self.loss_r_feature_layers[:1]])
+            loss_r_feature_first_copy = loss_r_feature_first.clone().detach()
+            loss_r_feature_first = self.first_bn_coef * loss_r_feature_first 
+
+            # # Match image stats
+            # img_mean = inputs_jit.mean([2, 3])
+            # img_std = inputs_jit.std([2,3])
+            # # print(img_mean.mean([0]), img_std.mean([0]))
+            # natural_image_mean = torch.tensor([0.51965, 0.49869, 0.44715]).cuda()
+            # natural_image_std = torch.tensor([0.24281, 0.23689, 0.24182]).cuda()
+            # loss_img_stats = torch.norm(img_mean - natural_image_mean, 2, dim=1).mean() + \
+            #                              torch.norm(img_std - natural_image_std, 2, dim=1).mean()
+            # loss_img_stats_copy = loss_img_stats.clone().detach()
+            # loss_img_stats *= self.alpha_img_stats
+
+            total_loss = task_loss + prior_loss_var_l1 + prior_loss_var_l2 + loss_r_feature + loss_r_feature_first # + loss_img_stats
+
+            # To check if weight decay is working 
+            inputs_norm = torch.norm(inputs) / inputs.shape[0] 
+
+            # do image update
+            optimizer.zero_grad()
+            net_teacher.zero_grad()
+            total_loss.backward() 
+            optimizer.step()
+            
+            # Write logs to tensorboard
+
+            # Weighted Loss
+            self.writer.add_scalar("weighted/total_loss", total_loss.item(), iteration)
+            self.writer.add_scalar("weighted/task_loss", task_loss.item(), iteration)
+            self.writer.add_scalar("weighted/prior_loss_var_l1", prior_loss_var_l1.item(), iteration)
+            self.writer.add_scalar("weighted/prior_loss_var_l2", prior_loss_var_l2.item(), iteration)
+            self.writer.add_scalar("weighted/loss_r_feature", loss_r_feature.item(), iteration)
+            self.writer.add_scalar("weighted/loss_r_feature_first", loss_r_feature_first.item(), iteration)
+            # self.writer.add_scalar("weighted/loss_img_stats", loss_img_stats.item(), iteration)
+            # Unweighted loss
+            self.writer.add_scalar("unweighted/task_loss", task_loss_copy.item() , iteration)
+            self.writer.add_scalar("unweighted/prior_loss_var_l1", prior_loss_var_l1_copy.item() , iteration)
+            self.writer.add_scalar("unweighted/prior_loss_var_l2", prior_loss_var_l2_copy.item() , iteration)
+            self.writer.add_scalar("unweighted/loss_r_feature", loss_r_feature_copy.item() , iteration)
+            self.writer.add_scalar("unweighted/loss_r_feature_first", loss_r_feature_first_copy.item() , iteration) 
+            # self.writer.add_scalar("unweighted/loss_img_stats", loss_img_stats_copy.item(), iteration)
+            # self.writer.add_scalar("unweighted/loss_r_feature_L0", self.loss_r_feature_layers[0].r_feature.item(), iteration)
+            # self.writer.add_scalar("unweighted/loss_r_feature_L1", self.loss_r_feature_layers[1].r_feature.item(), iteration)
+            # self.writer.add_scalar("unweighted/loss_r_feature_L2", self.loss_r_feature_layers[2].r_feature.item(), iteration)
+            self.writer.add_scalar("unweighted/inputs_norm", inputs_norm.item(), iteration) 
+            self.writer.add_scalar("learning_rate", float(optimizer.param_groups[0]["lr"]), iteration)
+        
+            # Write logs to txt file 
+            # weighted
+            self.txtwriter.write("-"*50 + "\n")
+            self.txtwriter.write("ITERATION: {}\n".format(iteration))
+            self.txtwriter.write("weighted/total_loss {}\n".format(total_loss.item()))
+            self.txtwriter.write("weighted/task_loss {}\n".format(task_loss.item())) 
+            self.txtwriter.write("weighted/prior_loss_var_l1 {}\n".format(prior_loss_var_l1.item()))
+            self.txtwriter.write("weighted/prior_loss_var_l2 {}\n".format(prior_loss_var_l2.item()))
+            self.txtwriter.write("weighted/loss_r_feature {}\n".format(loss_r_feature.item()))
+            self.txtwriter.write("weighted/loss_r_feature_first {}\n".format(loss_r_feature_first.item()))
+            # self.txtwriter.write("weighted/loss_img_stats {}\n".format(loss_img_stats.item()))
+            # unweighted
+            self.txtwriter.write("unweighted/task_loss {}\n".format(task_loss_copy.item() )) 
+            self.txtwriter.write("unweighted/prior_loss_var_l1 {}\n".format(prior_loss_var_l1_copy.item() ))
+            self.txtwriter.write("unweighted/prior_loss_var_l2 {}\n".format(prior_loss_var_l2_copy.item() ))
+            self.txtwriter.write("unweighted/loss_r_feature {}\n".format(loss_r_feature_copy.item() ))
+            self.txtwriter.write("unweighted/loss_r_feature_first {}\n".format(loss_r_feature_first_copy.item() )) 
+            # self.txtwriter.write("unweighted/loss_img_stats {}\n".format(loss_img_stats_copy.item()))
+            # self.txtwriter.write("unweighted/loss_r_feature_L0 {}\n".format( self.loss_r_feature_layers[0].r_feature.item()))
+            # self.txtwriter.write("unweighted/loss_r_feature_L1 {}\n".format( self.loss_r_feature_layers[1].r_feature.item()))
+            # self.txtwriter.write("unweighted/loss_r_feature_L2 {}\n".format( self.loss_r_feature_layers[2].r_feature.item()))
+            self.txtwriter.write("unweighted/inputs_norm {}\n".format(inputs_norm.item()))
+            self.txtwriter.write("learning_Rate {}\n".format(float(optimizer.param_groups[0]["lr"])))
+
+            if (iteration % self.display_every) == 0:
+                print("Iteration: {}".format(iteration))
+                print("[WEIGHTED] total loss", total_loss.item())
+                print("[WEIGHTED] task_loss", task_loss.item())
+                print("[WEIGHTED] prior_loss_var_l1: ", prior_loss_var_l1.item())
+                print("[WEIGHTED] prior_loss_var_l2: ", prior_loss_var_l2.item())
+                print("[WEIGHTED] loss_r_feature", loss_r_feature.item())
+                print("[WEIGHTED] loss_r_feature_first", loss_r_feature_first.item())
+                # print("[UNWEIGHTED] loss_img_stats", loss_img_stats_copy.item())
+                print("[UNWEIGHTED] inputs_norm", inputs_norm.item())
+
+            # Save to disk
+            if (iteration % self.save_every) == 0: 
+                im_copy = inputs.clone().detach().cpu()
+
+                # compute metrics (mp, mr, map, mf1) for the updated image on net_verifier
+                _, _, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets)
+                self.writer.add_scalar("unweighted/mAP VERIFIER", float(mean_ap), iteration)
+                self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mean_f1), iteration)
+                self.txtwriter.write("unweighted/mAP VERIFIER {}\n".format(float(mean_ap)))
+                self.txtwriter.write("unweighted/mF1 VERIFIER {}\n".format(float(mean_f1)))
+                print("[UNWEIGHTED] mAP VERIFIER {}".format(mean_ap))
+                print("[UNWEIGHTED] mF1 VERIFIER {}".format(mean_f1))
+
+                # compute metrics (mp, mr, map, mf1) for the updated image on net_teacher
+                _, _, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets)
+                self.writer.add_scalar("unweighted/mAP TEACHER", float(mean_ap), iteration)
+                self.writer.add_scalar("unweighted/mF1 TEACHER", float(mean_f1), iteration)
+                self.txtwriter.write("unweighted/mAP TEACHER {}\n".format(float(mean_ap)))
+                self.txtwriter.write("unweighted/mF1 TEACHER {}\n".format(float(mean_f1)))
+                print("[UNWEIGHTED] mAP TEACHER {}".format(mean_ap))
+                print("[UNWEIGHTED] mF1 TEACHER {}".format(mean_f1))
+
+                im_boxes_teacher = run_inference(self.net_teacher, im_copy) # Add bounding boxes to generated images
+                im_boxes_verifier= run_inference(self.net_verifier, im_copy) # Add bounding boxes to generated images
+                # self.save_image(
+                #     batch_tens =im_boxes_teacher,
+                #     loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)), 
+                #     halfsize=False
+                # )
+                self.save_image(
+                    batch_tens =im_boxes_verifier,
+                    loc   = os.path.join(self.path, "iteration_verifier_{}.jpg".format(iteration)), 
+                    halfsize=False
+                )
+                del im_copy, im_boxes_teacher, im_boxes_verifier
+                torch.cuda.empty_cache()
+
+            # optimizer.state = collections.defaultdict(dict)
 
 
         # to reduce memory consumption by states of the optimizer
@@ -622,7 +560,6 @@ class DeepInversionClass(object):
         
         self.net_teacher.eval()
         generatedImages = self.get_images(targets, init)
-        self.num_generations += 1
 
         # Copy folder from self.path to self.origpath 
         if "NGC_JOB_ID" in os.environ: 
