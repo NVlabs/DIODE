@@ -331,7 +331,6 @@ class DeepInversionClass(object):
         save_every = self.save_every
         best_cost = 1e4
         criterion = self.criterion
-        img_original = self.image_resolution
 
         # Setup input (which will be optimized)
         gpu_device = torch.device("cuda:0")
@@ -366,7 +365,7 @@ class DeepInversionClass(object):
             inputs_jit = torch.roll(inputs_jit, shifts=(off1, off2), dims=(2, 3))
             if any([off1, off2]):
                 height, width = inputs_jit.shape[2], inputs_jit.shape[3]
-                targets_jit = jitter_targets(targets_jit, off2, off1, img_shape=(width, height))
+                targets_jit = jitter_targets(targets_jit, off2, off1, img_shape=(height, width))
 
             # Random horizontal flips
             flip = random.random() > 0.5

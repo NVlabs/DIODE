@@ -3,7 +3,7 @@ echo "CURDATETIME: ${now}"
 export CUDA_VISIBLE_DEVICES="auto"
 source auto_gpu.sh
 echo "${CUDA_VISIBLE_DEVICES}"
-python main_yolo.py --bs=64 \
+python main_yolo.py --resolution=320 --bs=64 \
 --jitter=30 --do_flip --mean_var_clip --rand_brightness --rand_contrast --random_erase \
 --path="./yoloResults/test/quicktest/${now}" \
 --train_txt_path="/tmp/coco/ngc_5k.txt" \

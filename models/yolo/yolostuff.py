@@ -74,13 +74,12 @@ def run_inference(net, batch_tens, nms_params = {"iou_thres":0.5, "conf_thres":0
 
 
 def get_model_and_targets(
-        batch_size=64, load_pickled=True, shuffle=False, 
+        img_size=320, batch_size=64, load_pickled=True, shuffle=False,
         train_txt_path="/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt"):
     
     # params
     cfg = "./models/yolo/cfg/yolov3.cfg" 
     data = "data/coco2014.data" 
-    img_size = 320
     weights = "./models/yolo/yolov3.pt"
     cpu_device = torch.device("cpu")
     gpu_device = torch.device("cuda:0")
@@ -229,10 +228,9 @@ def calculate_metrics(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thr
     torch.cuda.empty_cache()
     return mp, mr, map, mf1
 
-def get_verifier():
+def get_verifier(img_size=320):
     # params
     verifier_cfg = "./models/yolo/cfg/yolov3-tiny.cfg" 
-    img_size = 320
     weights = "./models/yolo/yolov3-tiny.pt"
     cpu_device = torch.device("cpu")
     gpu_device = torch.device("cuda:0")
@@ -268,12 +266,12 @@ def jitter_targets(targets, xshift=0, yshift=0, img_shape=(320,320)):
     """
     Apply horizontal & vertical jittering to the targets for given img_shape
     note: img_shape is in real world parameters, but targets are still between 0-1 
-    img_shape = (width, height)
+    img_shape = (height, width)
     targets shape = [batch_idx, cls, center x, center y, w, h]
     """ 
     assert targets.shape[1] == 6
     targets_jittered = targets.clone().detach().cpu() 
-    width, height = img_shape 
+    height, width = img_shape
     xywh = targets_jittered[:,2:]
     whwh = torch.tensor([width, height, width, height], dtype=torch.float32)
     xyxy = xywh2xyxy(xywh) * whwh
@@ -355,7 +353,7 @@ def random_erase_masks(inputs_shape, return_cuda=True):
 
 def convert_to_coco(inputs_tensor, targets):
     """
-    Convert an inputs_tensor (bsx3x320x320) to #bs images in PIL format
+    Convert an inputs_tensor (bs x 3 x height x width) to #bs images in PIL format
     Convert targets loaded by a dataloader to plaintxt annotations in coco format
     """
     images = inputs_tensor.clone().detach().cpu()

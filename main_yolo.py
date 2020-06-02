@@ -31,7 +31,11 @@ def set_all_seeds(seeds):
 def run(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
 
-    net, (imgs, targets, imgspaths), loss_fun = get_model_and_targets(batch_size=args.bs, load_pickled=False, shuffle=args.shuffle, train_txt_path=args.train_txt_path)
+    net, (imgs, targets, imgspaths), loss_fun = get_model_and_targets(
+        img_size=args.resolution[0], batch_size=args.bs,
+        load_pickled=False, shuffle=args.shuffle,
+        train_txt_path=args.train_txt_path)
+
     net = net.to(device)
     net_verifier = get_verifier()
     net_verifier = net_verifier.to(device)
@@ -40,10 +44,6 @@ def run(args):
     net_verifier.eval()
 
     args.start_noise = True
-
-    height = int(imgs.shape[2]) 
-    width  = int(imgs.shape[3]) 
-    args.resolution = (height, width)
 
     parameters = dict()
     # Data augmentation params
@@ -129,7 +129,7 @@ def run(args):
         DeepInversionEngine.txtwriter.write("[CACHE_BATCH_STATS] Overwriting cached_mean and cached_var with batch stats of real data\n")
 
     # random initialized inputs 
-    init = torch.rand((DeepInversionEngine.bs, 3, DeepInversionEngine.image_resolution[0], DeepInversionEngine.image_resolution[1]), dtype=torch.float)
+    init = torch.rand((DeepInversionEngine.bs, 3, args.resolution[0], args.resolution[1]), dtype=torch.float)
     init = (args.init_scale * init) + args.init_bias
     init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
     DeepInversionEngine.save_image(init, os.path.join(DeepInversionEngine.path, "initialization.jpg"), halfsize=True)
@@ -157,6 +157,7 @@ def main():
     parser.add_argument('--shuffle', action='store_true', help='use shuffle in dataloader')
     parser.add_argument('--no-cuda', action='store_true')
 
+    parser.add_argument('--resolution', default=320, type=int, help="image optimization resolution")
     parser.add_argument('--epochs', default=20000, type=int, help='number of epochs?')
     parser.add_argument('--iterations', default=2000, type=int, help='number of iterations for DI optim')
     parser.add_argument('--bs', default=1, type=int, help='batch size')
@@ -191,6 +192,7 @@ def main():
     parser.add_argument("--beta2", type=float, default=0.999, help="beta1 for adam optimizer")
 
     args = parser.parse_args()
+    args.resolution = (args.resolution, args.resolution) # int -> (height,width)
 
     print(args)
     torch.backends.cudnn.benchmark = True
