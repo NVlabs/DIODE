@@ -26,7 +26,7 @@ hyp = {'giou': 3.54,  # giou loss gain
        'scale': 0.05 * 0,  # image scale (+/- gain)
        'shear': 0.641 * 0}  # image shear (+/- deg)
 
-def run_inference(net, batch_tens): 
+def run_inference(net, batch_tens, nms_params = {"iou_thres":0.5, "conf_thres":0.01}):
 
     imgs = batch_tens.clone().detach().cuda()  
     net.eval() 
@@ -42,9 +42,8 @@ def run_inference(net, batch_tens):
         pred = net(imgs)[0] # (batchsize, bboxes, 85) 
 
         # Apply NMS
-        conf_thres = 0.3 
-        iou_thres  = 0.6 
-        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=None, agnostic=False)
+        # Confidence threshold: 0.01 for speed, 0.001 for best mAP
+        pred = non_max_suppression(pred, nms_params["conf_thres"], nms_params["iou_thres"], classes=None, agnostic=False)
 
     # Plot bounding boxes on each image
     imgs_with_boxes = []
@@ -148,7 +147,7 @@ def get_model_and_targets(
 
     return model, (imgs, targets, imgspaths), compute_loss
 
-def calculate_metrics(net, imgs, targets):
+def calculate_metrics(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01}):
     """
     Calculate iou metrics on network using imgs and corresponding targets
     """
@@ -161,9 +160,8 @@ def calculate_metrics(net, imgs, targets):
     with torch.no_grad():
         preds = net(imgs)[0] # (batchsize, bboxes, 85)
         # Apply NMS
-        conf_thres = 0.01 # 0.01 for speed, 0.001 for best mAP
-        iou_thres  = 0.6
-        output = non_max_suppression(preds, conf_thres, iou_thres, classes=None, agnostic=False)
+        # Confidence threshold: 0.01 for speed, 0.001 for best mAP
+        output = non_max_suppression(preds, nms_params["conf_thres"], nms_params["iou_thres"], classes=None, agnostic=False)
 
     # hyperparameters
     batch_size, _, height, width = imgs.shape
