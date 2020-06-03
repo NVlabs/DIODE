@@ -1,7 +1,7 @@
 now=$(date +"day_%m_%d_%Y_time_%H_%M_%S")
 echo "CURDATETIME: ${now}"
 export CUDA_VISIBLE_DEVICES="auto"
-source auto_gpu.sh
+source scripts/auto_gpu.sh
 echo "${CUDA_VISIBLE_DEVICES}"
 python main_yolo.py --resolution=320 --bs=64 \
 --jitter=30 --do_flip --mean_var_clip --rand_brightness --rand_contrast --random_erase \
