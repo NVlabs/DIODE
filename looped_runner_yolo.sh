@@ -13,7 +13,7 @@ do
     OUTDIR+="$SEED"
     echo "output directory: ${OUTDIR}"
 
-    python main_yolo.py --bs=32 \
+    python main_yolo.py --resolution=320 --bs=64 \
     --jitter=30 --do_flip --mean_var_clip --rand_brightness --rand_contrast --random_erase \
     --path="/result/$OUTDIR" \
     --train_txt_path="/akshayws/ngc_train_82k.txt" \
@@ -28,7 +28,7 @@ do
     --wd=0 \
     --save_every=500 \
     --seeds="0,0,${SEED}" --shuffle \
-    --display_every=100 --init_scale=0.28661 --init_bias=0.48853 > /dev/null  
+    --display_every=100 --init_scale=0.28661 --init_bias=0.48853 --fp16 > /dev/null
 
     cat /result/$OUTDIR/losses.log | grep "\[VERIFIER\] Real image mAP"
     cat /result/$OUTDIR/losses.log | grep "mAP VERIFIER" | tail -n1
