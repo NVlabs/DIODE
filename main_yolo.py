@@ -128,13 +128,23 @@ def run(args):
         print("Overwriting cached_mean and cached_var with batch stats of real data") 
         DeepInversionEngine.txtwriter.write("[CACHE_BATCH_STATS] Overwriting cached_mean and cached_var with batch stats of real data\n")
 
-    # random initialized inputs 
-    init = torch.rand((DeepInversionEngine.bs, 3, args.resolution[0], args.resolution[1]), dtype=torch.float)
-    init = (args.init_scale * init) + args.init_bias
-    init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
+    # initialize inputs
+    if args.init_chkpt.endswith(".pt"):
+        init = torch.load(args.init_chkpt, map_location=torch.device("cpu"))["images"]
+        assert init.shape[0] == args.bs, "Batchsize: {} , chkpt batchsize: {}".format(args.bs, init.shape[0])
+        if init.shape[2] != args.resolution[0]:
+            init = F.interpolate(init, size=(args.resolution[0], args.resolution[1]))
+    else:
+        init = torch.rand((DeepInversionEngine.bs, 3, args.resolution[0], args.resolution[1]), dtype=torch.float)
+        init = (args.init_scale * init) + args.init_bias
+        init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
     DeepInversionEngine.save_image(init, os.path.join(DeepInversionEngine.path, "initialization.jpg"), halfsize=True)
 
     generatedImages = DeepInversionEngine.generate_batch(targets, init)
+
+    # Store image checkpoint (useful for multi-scale generation)
+    chkpt = {"images":generatedImages, "targets":targets}
+    torch.save(chkpt, os.path.join(args.path, "chkpt.pt"))
 
     # Store generatedImages in coco format
     os.makedirs(os.path.join(args.path, "coco", "images", "train2014"))
@@ -188,6 +198,7 @@ def main():
     parser.add_argument("--real_mixin_alpha", type=float, default=0.0, help="how much of real image to mix in with the random initialization")
     parser.add_argument("--init_scale", type=float, default=1.0, help="for scaling the initialization, useful to start with a 'closer to black' kinda image") 
     parser.add_argument("--init_bias", type=float, default=0.0, help="for biasing the initialization")
+    parser.add_argument('--init_chkpt', type=str, default="", help="chkpt containing initialization image (will up upsampled to args.resolution)")
     parser.add_argument("--beta1", type=float, default=0.9, help="beta1 for adam optimizer")
     parser.add_argument("--beta2", type=float, default=0.999, help="beta1 for adam optimizer")
 
