@@ -92,6 +92,23 @@ def run(args):
                                              coefficients = coefficients,
                                              network_output_function = network_output_function)
 
+    # initialize inputs
+    if args.init_chkpt.endswith(".pt"):
+        initchkpt = torch.load(args.init_chkpt, map_location=torch.device("cpu"))
+        init = initchkpt["images"]
+        imgs = initchkpt["origimages"]
+        targets = initchkpt["targets"]
+        imgspaths = initchkpt["imgspaths"]
+        init, imgs, imgspaths = init[0:args.bs], imgs[0:args.bs], imgspaths[0:args.bs]
+        targets = targets[targets[:,0]<args.bs]
+        if init.shape[2] != args.resolution[0]:
+            init = F.interpolate(init, size=(args.resolution[0], args.resolution[1]))
+    else:
+        init = torch.rand((args.bs, 3, args.resolution[0], args.resolution[1]), dtype=torch.float)
+        init = (args.init_scale * init) + args.init_bias
+        init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
+    DeepInversionEngine.save_image(init, os.path.join(DeepInversionEngine.path, "initialization.jpg"), halfsize=True)
+
     # Save the input image to disk
     imgs = imgs.float() / 255.0
     imgs_with_boxes = run_inference(net, imgs)
@@ -128,22 +145,11 @@ def run(args):
         print("Overwriting cached_mean and cached_var with batch stats of real data") 
         DeepInversionEngine.txtwriter.write("[CACHE_BATCH_STATS] Overwriting cached_mean and cached_var with batch stats of real data\n")
 
-    # initialize inputs
-    if args.init_chkpt.endswith(".pt"):
-        init = torch.load(args.init_chkpt, map_location=torch.device("cpu"))["images"]
-        assert init.shape[0] == args.bs, "Batchsize: {} , chkpt batchsize: {}".format(args.bs, init.shape[0])
-        if init.shape[2] != args.resolution[0]:
-            init = F.interpolate(init, size=(args.resolution[0], args.resolution[1]))
-    else:
-        init = torch.rand((DeepInversionEngine.bs, 3, args.resolution[0], args.resolution[1]), dtype=torch.float)
-        init = (args.init_scale * init) + args.init_bias
-        init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
-    DeepInversionEngine.save_image(init, os.path.join(DeepInversionEngine.path, "initialization.jpg"), halfsize=True)
 
     generatedImages = DeepInversionEngine.generate_batch(targets, init)
 
     # Store image checkpoint (useful for multi-scale generation)
-    chkpt = {"images":generatedImages, "targets":targets}
+    chkpt = {"images":generatedImages, "targets":targets, "origimages": imgs, "imgspaths":imgspaths}
     torch.save(chkpt, os.path.join(args.path, "chkpt.pt"))
 
     # Store generatedImages in coco format
