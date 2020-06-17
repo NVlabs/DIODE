@@ -503,22 +503,28 @@ class DeepInversionClass(object):
                 im_copy = inputs.clone().detach().cpu()
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_verifier
-                _, _, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets)
+                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets)
                 self.writer.add_scalar("unweighted/mAP VERIFIER", float(mean_ap), iteration)
                 self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mean_f1), iteration)
+                self.writer.add_scalar("unweighted/mPrec VERIFIER", float(mean_precision), iteration)
+                self.writer.add_scalar("unweighted/mRec VERIFIER", float(mean_recall), iteration)
                 self.txtwriter.write("unweighted/mAP VERIFIER {}\n".format(float(mean_ap)))
                 self.txtwriter.write("unweighted/mF1 VERIFIER {}\n".format(float(mean_f1)))
+                self.txtwriter.write("unweighted/mPrec VERIFIER {}\n".format(float(mean_precision)))
+                self.txtwriter.write("unweighted/mRec VERIFIER {}\n".format(float(mean_recall)))
                 print("[UNWEIGHTED] mAP VERIFIER {}".format(mean_ap))
-                print("[UNWEIGHTED] mF1 VERIFIER {}".format(mean_f1))
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_teacher
-                _, _, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets)
+                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets)
                 self.writer.add_scalar("unweighted/mAP TEACHER", float(mean_ap), iteration)
                 self.writer.add_scalar("unweighted/mF1 TEACHER", float(mean_f1), iteration)
+                self.writer.add_scalar("unweighted/mPrec TEACHER", float(mean_precision), iteration)
+                self.writer.add_scalar("unweighted/mRec TEACHER", float(mean_recall), iteration)
                 self.txtwriter.write("unweighted/mAP TEACHER {}\n".format(float(mean_ap)))
                 self.txtwriter.write("unweighted/mF1 TEACHER {}\n".format(float(mean_f1)))
+                self.txtwriter.write("unweighted/mPrec TEACHER {}\n".format(float(mean_precision)))
+                self.txtwriter.write("unweighted/mRec TEACHER {}\n".format(float(mean_recall)))
                 print("[UNWEIGHTED] mAP TEACHER {}".format(mean_ap))
-                print("[UNWEIGHTED] mF1 TEACHER {}".format(mean_f1))
 
                 im_boxes_teacher = run_inference(self.net_teacher, im_copy) # Add bounding boxes to generated images
                 im_boxes_verifier= run_inference(self.net_verifier, im_copy) # Add bounding boxes to generated images

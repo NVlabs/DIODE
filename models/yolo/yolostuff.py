@@ -1,9 +1,9 @@
 from .datasets import LoadImagesAndLabels
-from .models import Darknet, compute_loss 
+from .models import Darknet, compute_loss
 from .utils import labels_to_class_weights, non_max_suppression, plot_one_box, clip_coords, xywh2xyxy, xyxy2xywh, box_iou, ap_per_class
-import torch 
+import torch
 import glob, pickle, os
-import numpy as np 
+import numpy as np
 import torchvision
 from PIL import Image
 
@@ -28,18 +28,18 @@ hyp = {'giou': 3.54,  # giou loss gain
 
 def run_inference(net, batch_tens, nms_params = {"iou_thres":0.5, "conf_thres":0.01}):
 
-    imgs = batch_tens.clone().detach().cuda()  
-    net.eval() 
+    imgs = batch_tens.clone().detach().cuda()
+    net.eval()
 
-    # Get colors + names of classes 
-    with open("./models/yolo/names.pkl", "rb") as f: 
-        names = pickle.load(f) 
-    with open("./models/yolo/colors.pkl", "rb") as f: 
-        colors = pickle.load(f) 
+    # Get colors + names of classes
+    with open("./models/yolo/names.pkl", "rb") as f:
+        names = pickle.load(f)
+    with open("./models/yolo/colors.pkl", "rb") as f:
+        colors = pickle.load(f)
 
     # Inference
     with torch.no_grad():
-        pred = net(imgs)[0] # (batchsize, bboxes, 85) 
+        pred = net(imgs)[0] # (batchsize, bboxes, 85)
 
         # Apply NMS
         # Confidence threshold: 0.01 for speed, 0.001 for best mAP
@@ -47,27 +47,27 @@ def run_inference(net, batch_tens, nms_params = {"iou_thres":0.5, "conf_thres":0
 
     # Plot bounding boxes on each image
     imgs_with_boxes = []
-    for idx, det in enumerate(pred): 
+    for idx, det in enumerate(pred):
 
-        img_np = imgs[idx].clone().detach().cpu().numpy() 
+        img_np = imgs[idx].clone().detach().cpu().numpy()
         img_np = np.transpose(img_np, axes=(1,2,0))
-        img_np = (img_np * 255).astype(np.uint8) 
+        img_np = (img_np * 255).astype(np.uint8)
         img_np = np.ascontiguousarray(img_np, dtype=np.uint8)
 
-        # Plot boundingboxes for this image 
+        # Plot boundingboxes for this image
         if det is not None:
-            for *xyxy, conf, cls in det: 
-                label = '%s %.2f' % (names[int(cls)], conf) 
+            for *xyxy, conf, cls in det:
+                label = '%s %.2f' % (names[int(cls)], conf)
                 plot_one_box(xyxy, img_np, label=label, color=colors[int(cls)])
-        else: 
+        else:
             # print("[INFERENCE] NoneType found in Prediction skipping drawing boxes on this image idx {}".format(idx))
             pass
-        
+
         imgs_with_boxes.append(np.transpose(img_np, axes=(2,0,1)))
-    imgs_with_boxes = np.array(imgs_with_boxes).astype(np.float32) / 255.0 
-    imgs_with_boxes = torch.from_numpy(imgs_with_boxes) 
-    
-    del pred 
+    imgs_with_boxes = np.array(imgs_with_boxes).astype(np.float32) / 255.0
+    imgs_with_boxes = torch.from_numpy(imgs_with_boxes)
+
+    del pred
     torch.cuda.empty_cache()
 
     return imgs_with_boxes
@@ -76,15 +76,15 @@ def run_inference(net, batch_tens, nms_params = {"iou_thres":0.5, "conf_thres":0
 def get_model_and_targets(
         img_size=320, batch_size=64, load_pickled=True, shuffle=False,
         train_txt_path="/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt"):
-    
+
     # params
-    cfg = "./models/yolo/cfg/yolov3.cfg" 
-    data = "data/coco2014.data" 
+    cfg = "./models/yolo/cfg/yolov3.cfg"
+    data = "data/coco2014.data"
     weights = "./models/yolo/yolov3.pt"
     cpu_device = torch.device("cpu")
     gpu_device = torch.device("cuda:0")
     num_workers = 0
-    nc = 80 
+    nc = 80
     arc = "default"
 
     # models
@@ -92,22 +92,22 @@ def get_model_and_targets(
     model.load_state_dict(torch.load(weights, map_location=cpu_device)['model'])
 
     # Datasets + DataLoaders
-    if (len(glob.glob("./serialized_dict.pkl")) == 1) and load_pickled:  
+    if (len(glob.glob("./serialized_dict.pkl")) == 1) and load_pickled:
         print("Loading seed data from serialized_dict.pkl")
-        with open("serialized_dict.pkl", "rb") as f: 
-            serialized_dict = pickle.load(f) 
-        imgs = torch.from_numpy(serialized_dict["imgs"]) 
-        targets = torch.from_numpy(serialized_dict["targets"]) 
+        with open("serialized_dict.pkl", "rb") as f:
+            serialized_dict = pickle.load(f)
+        imgs = torch.from_numpy(serialized_dict["imgs"])
+        targets = torch.from_numpy(serialized_dict["targets"])
         labels = serialized_dict["labels"]
         imgspaths = None
         assert batch_size <= imgs.shape[0], "ERROR: pickled data bsize: {} , required bsize: {}, Insufficient data".format(imgs.shape[0], batch_size)
-        if batch_size < imgs.shape[0]: 
-            import warnings 
+        if batch_size < imgs.shape[0]:
+            import warnings
             excess_data_warning_str = "loaded pickled data has bsize: {} , required bsize:  {} , So clipping out extra data".format(imgs.shape[0], batch_size)
             warnings.warn(excess_data_warning_str)
             imgs = imgs[0:batch_size]
             targets = targets[ targets[:,0] < batch_size ] # targets[0,:] = (batch_idx, class, x, y, w, h)
-    else: 
+    else:
         print("Loading seed data from Full Dataloader")
         assert os.path.isfile(train_txt_path)
         dataset = LoadImagesAndLabels(train_txt_path, img_size, batch_size,
@@ -129,11 +129,11 @@ def get_model_and_targets(
         imgs, targets, imgspaths, _ = next(_iter)
         labels = dataset.labels
         serialized_dict = {
-            "imgs": imgs.detach().cpu().numpy(), 
-            "targets": targets.detach().cpu().numpy(), 
+            "imgs": imgs.detach().cpu().numpy(),
+            "targets": targets.detach().cpu().numpy(),
             "labels": labels
             }
-        # with open("serialized_dict.pkl", "wb") as f: 
+        # with open("serialized_dict.pkl", "wb") as f:
         #     pickle.dump(serialized_dict, f)
 
     # Attach extras to model
@@ -223,19 +223,19 @@ def calculate_metrics(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thr
     # print("MP: {} MR: {} MAP: {} MF1: {}".format(mp, mr, map, mf1))
     # print("Number of targets per class: {}".format(nt))
 
-    # save memory 
+    # save memory
     del output, preds
     torch.cuda.empty_cache()
     return mp, mr, map, mf1
 
 def get_verifier(img_size=320):
     # params
-    verifier_cfg = "./models/yolo/cfg/yolov3-tiny.cfg" 
+    verifier_cfg = "./models/yolo/cfg/yolov3-tiny.cfg"
     weights = "./models/yolo/yolov3-tiny.pt"
     cpu_device = torch.device("cpu")
     gpu_device = torch.device("cuda:0")
     num_workers = 0
-    nc = 80 
+    nc = 80
     arc = "default"
 
     # verifiers
@@ -250,69 +250,69 @@ def get_verifier(img_size=320):
 
     return verifier
 
-def flip_targets(targets, horizontal=True, vertical=False): 
+def flip_targets(targets, horizontal=True, vertical=False):
     """
     horizontal and vertical flipping for targets
     """
-    assert targets.shape[1] == 6 
-    targets_flipped = targets.clone().detach() 
-    if horizontal: 
+    assert targets.shape[1] == 6
+    targets_flipped = targets.clone().detach()
+    if horizontal:
         targets_flipped[:,2] = 0.5 - (targets_flipped[:,2] - 0.5)
-    if vertical: 
+    if vertical:
         targets_flipped[:,3] = 0.5 - (targets_flipped[:,3] - 0.5)
     return targets_flipped
 
-def jitter_targets(targets, xshift=0, yshift=0, img_shape=(320,320)): 
+def jitter_targets(targets, xshift=0, yshift=0, img_shape=(320,320)):
     """
     Apply horizontal & vertical jittering to the targets for given img_shape
-    note: img_shape is in real world parameters, but targets are still between 0-1 
+    note: img_shape is in real world parameters, but targets are still between 0-1
     img_shape = (height, width)
     targets shape = [batch_idx, cls, center x, center y, w, h]
-    """ 
+    """
     assert targets.shape[1] == 6
-    targets_jittered = targets.clone().detach().cpu() 
+    targets_jittered = targets.clone().detach().cpu()
     height, width = img_shape
     xywh = targets_jittered[:,2:]
     whwh = torch.tensor([width, height, width, height], dtype=torch.float32)
     xyxy = xywh2xyxy(xywh) * whwh
 
-    # adjust the tbox 
-    xyxy[:,0] += xshift 
-    xyxy[:,2] += xshift 
-    xyxy[:,1] += yshift 
-    xyxy[:,3] += yshift 
+    # adjust the tbox
+    xyxy[:,0] += xshift
+    xyxy[:,2] += xshift
+    xyxy[:,1] += yshift
+    xyxy[:,3] += yshift
 
     # Limit co-ords
     xyxy[:,0] = torch.clamp(xyxy[:,0], min=0, max=width)
-    xyxy[:,2] = torch.clamp(xyxy[:,2], min=0, max=width) 
+    xyxy[:,2] = torch.clamp(xyxy[:,2], min=0, max=width)
     xyxy[:,1] = torch.clamp(xyxy[:,1], min=0, max=height)
     xyxy[:,3] = torch.clamp(xyxy[:,3], min=0, max=height)
 
-    # xyxy --> xywh 
+    # xyxy --> xywh
     xywh = xyxy2xywh(xyxy / whwh)
     targets_jittered[:,2:] = xywh
 
-    # remove boxes that have 0 area 
-    oof = (targets_jittered[:,-1] * targets_jittered[:,-2] * width * height) < 1 
+    # remove boxes that have 0 area
+    oof = (targets_jittered[:,-1] * targets_jittered[:,-2] * width * height) < 1
     # print("Jittering Dropping {} boxes".format(oof.sum()))
     targets_jittered = targets_jittered[~oof]
 
     return targets_jittered.to(targets.device)
 
 
-def plot_all_boxes(imgs, targets): 
+def plot_all_boxes(imgs, targets):
     """
-    Useful as a debugging tool for def: jitter_box and def: flip_box 
+    Useful as a debugging tool for def: jitter_box and def: flip_box
     """
 
     # targets shape: #boxes x 6  [batch_idx, cls, x, y, w, h]
-    targets = targets.clone().detach().cpu() 
+    targets = targets.clone().detach().cpu()
     imgs_np = imgs.clone().detach().cpu().numpy()
     imgs_np = np.transpose(imgs_np, axes=(0, 2, 3, 1))
     imgs_np = (imgs_np * 255).astype(np.uint8)
     imgs_np = np.ascontiguousarray(imgs_np, dtype=np.uint8)
 
-    # plot box-by-box 
+    # plot box-by-box
     height, width = imgs_np.shape[1], imgs_np.shape[2]
     whwh = torch.tensor([width, height, width, height], dtype=torch.float32)
     for box_idx, box in enumerate(targets):
@@ -324,30 +324,30 @@ def plot_all_boxes(imgs, targets):
 
     imgs_np = np.transpose(imgs_np, axes=(0, 3, 1, 2))
     imgs_with_boxes = torch.from_numpy(imgs_np.astype(np.float32) / 255.0)
-    
+
     return imgs_with_boxes
 
 def random_erase_masks(inputs_shape, return_cuda=True):
     """
-    return a 1/0 mask with random rectangles marked as 0. 
-    shape should match inputs_shape 
-    """ 
-    bs = inputs_shape[0] 
-    height = inputs_shape[2] 
+    return a 1/0 mask with random rectangles marked as 0.
+    shape should match inputs_shape
+    """
+    bs = inputs_shape[0]
+    height = inputs_shape[2]
     width  = inputs_shape[3]
     masks = []
     _rand_erase = torchvision.transforms.RandomErasing(
-        p=0.5, 
+        p=0.5,
         scale=(0.02, 0.2),
-        ratio=(0.3, 3.3), 
+        ratio=(0.3, 3.3),
         value=0
     )
     for idx in range(bs):
         mask = torch.ones(3,height,width,dtype=torch.float32)
-        mask = _rand_erase(mask) 
-        masks.append(mask) 
-    masks = torch.stack(masks) 
-    if return_cuda: 
+        mask = _rand_erase(mask)
+        masks.append(mask)
+    masks = torch.stack(masks)
+    if return_cuda:
         masks = masks.cuda()
     return masks
 
@@ -378,3 +378,41 @@ def convert_to_coco(inputs_tensor, targets):
     assert len(coco_targets) == len(pil_images)
 
     return pil_images, coco_targets
+
+def draw_targets(imgs, targets):
+
+    batch_size = len(imgs)
+    # Get colors + names of classes
+    with open("./models/yolo/names.pkl", "rb") as f:
+        names = pickle.load(f)
+    with open("./models/yolo/colors.pkl", "rb") as f:
+        colors = pickle.load(f)
+
+    # Draw boxes
+    imgs_with_boxes = []
+    for idx in range(batch_size):
+        img_np = imgs[idx].clone().detach().cpu().numpy()
+        img_np = np.transpose(img_np, axes=(1,2,0))
+        img_np = (img_np * 255).astype(np.uint8)
+        img_np = np.ascontiguousarray(img_np, dtype=np.uint8)
+        height,width,_ = img_np.shape
+
+        targets_batch = targets[targets[:,0]==idx]
+        if len(targets_batch):
+            for box in targets_batch:
+                cls = int(box[1].item())
+                xywh = box[2:].view(1,-1)
+                xyxy = xywh2xyxy(xywh)
+                xyxy[:,0] *= width
+                xyxy[:,1] *= height
+                xyxy[:,2] *= width
+                xyxy[:,3] *= height
+                label="{}".format(names[cls])
+                plot_one_box(xyxy[0], img_np, label=label, color=colors[cls])
+        imgs_with_boxes.append(np.transpose(img_np, axes=(2,0,1)))
+
+    imgs_with_boxes = np.array(imgs_with_boxes).astype(np.float32) / 255.0
+    imgs_with_boxes = torch.from_numpy(imgs_with_boxes)
+
+    torch.cuda.empty_cache()
+    return imgs_with_boxes
