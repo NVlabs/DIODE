@@ -63,6 +63,7 @@ def run(args):
     parameters["display_every"] = args.display_every
     parameters["beta1"] = args.beta1
     parameters["beta2"] = args.beta2
+    parameters["nms_params"] = args.nms_params
 
     # criterion = nn.MSELoss()
     # criterion = nn.L1Loss()
@@ -112,18 +113,18 @@ def run(args):
 
     # Save the input image to disk
     imgs = imgs.float() / 255.0
-    imgs_with_boxes = run_inference(net, imgs)
-    imgs_with_boxes_verifier = run_inference(net_verifier, imgs)
+    imgs_with_boxes = run_inference(net, imgs, args.nms_params)
+    imgs_with_boxes_verifier = run_inference(net_verifier, imgs, args.nms_params)
     imgs_with_boxes_targets  = draw_targets(imgs, targets)
     DeepInversionEngine.save_image(imgs_with_boxes, os.path.join(DeepInversionEngine.path, "input_image_teacher.jpg"), halfsize=False)
     DeepInversionEngine.save_image(imgs_with_boxes_verifier, os.path.join(DeepInversionEngine.path, "input_image_verifier.jpg"), halfsize=False)
-    DeepInversionEngine.save_image(imgs_with_boxes_targets, os.path.join(DeepInversionEngine.path, "targets.jpg"), halfsize=False)
+    DeepInversionEngine.save_image(imgs_with_boxes_targets, os.path.join(DeepInversionEngine.path, "input_image_targets.jpg"), halfsize=False)
 
     # Calculate metrics 
-    _, _, mean_ap_verifier, mean_f1_verifier = calculate_metrics(net_verifier, imgs, targets)
+    _, _, mean_ap_verifier, mean_f1_verifier = calculate_metrics(net_verifier, imgs, targets, args.nms_params)
     DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mAP: {} \n".format(float(mean_ap_verifier)))
     DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mF1: {} \n".format(float(mean_f1_verifier)))
-    _, _, mean_ap_net, mean_f1_net = calculate_metrics(net, imgs, targets)
+    _, _, mean_ap_net, mean_f1_net = calculate_metrics(net, imgs, targets, args.nms_params)
     DeepInversionEngine.txtwriter.write("[NET] Real image mAP: {} \n".format(float(mean_ap_net)))
     DeepInversionEngine.txtwriter.write("[NET] Real image mF1: {} \n".format(float(mean_f1_net)))
 
@@ -150,6 +151,10 @@ def run(args):
 
 
     generatedImages = DeepInversionEngine.generate_batch(targets, init)
+    generatedImages_with_targets = draw_targets(generatedImages, targets)
+    generatedImages_with_preds   = run_inference(net_verifier, generatedImages, args.nms_params)
+    DeepInversionEngine.save_image(generatedImages_with_targets, os.path.join(DeepInversionEngine.path, "inverted_with_targets.jpg"), halfsize=False)
+    DeepInversionEngine.save_image(generatedImages_with_preds,   os.path.join(DeepInversionEngine.path, "inverted_with_preds.jpg"), halfsize=False)
 
     # Store image checkpoint (useful for multi-scale generation)
     chkpt = {"images":generatedImages, "targets":targets, "origimages": imgs, "imgspaths":imgspaths}
@@ -186,6 +191,8 @@ def main():
 
     parser.add_argument('--save_every', type=int, default=100, help='save an image every x iterations')
     parser.add_argument('--display_every', type=int, default=2, help='display the lsses every x iterations')
+    parser.add_argument("--nms_conf_thres", type=float, default=0.01, help="NMS confidence 0.01 for speed, 0.001 for max mAP (default 0.01)")
+    parser.add_argument("--nms_iou_thres", type=float, default=0.5, help="NMS iou threshold default: 0.5")
     parser.add_argument('--path', type=str, default='test', help='where to store experimental data NOT: MUST BE A FOLDER')
     parser.add_argument('--train_txt_path', type=str, default='/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt', help='Path to .txt file containing location of images for Dataset')
     parser.add_argument('--fp16', action="store_true", help="Enabled Mixed Precision Training")
@@ -213,6 +220,7 @@ def main():
 
     args = parser.parse_args()
     args.resolution = (args.resolution, args.resolution) # int -> (height,width)
+    args.nms_params = { "iou_thres":args.nms_iou_thres, "conf_thres":args.nms_conf_thres }
 
     print(args)
     torch.backends.cudnn.benchmark = True

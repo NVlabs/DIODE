@@ -268,6 +268,7 @@ class DeepInversionClass(object):
         self.display_every = parameters["display_every"]
         self.beta1 = parameters["beta1"]
         self.beta2 = parameters["beta2"]
+        self.nms_params = parameters["nms_params"]
 
         self.l1_reg = 0.0
         self.l2_reg = 0.0
@@ -290,16 +291,7 @@ class DeepInversionClass(object):
         self.main_loss_multiplier = coefficients["main_loss_multiplier"]
         self.alpha_img_stats = coefficients["alpha_img_stats"]
         self.use_amp = use_amp
-        
-        # Log to tmp if on NGC
-        if "NGC_JOB_ID" in os.environ: 
-            print("RUNNING IN NGC .. WRITING LOGS TO /TMP")
-            basename = os.path.basename(path) 
-            self.path = os.path.join("/tmp", basename)
-            self.origpath = path
-        else:
-            print("NOT RUNNING IN NGC")
-            self.path = path
+        self.path = path
 
         create_folder(self.path)
         print("Results and logs will be stored at: {}".format(self.path))
@@ -503,7 +495,7 @@ class DeepInversionClass(object):
                 im_copy = inputs.clone().detach().cpu()
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_verifier
-                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets)
+                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets, self.nms_params)
                 self.writer.add_scalar("unweighted/mAP VERIFIER", float(mean_ap), iteration)
                 self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mean_f1), iteration)
                 self.writer.add_scalar("unweighted/mPrec VERIFIER", float(mean_precision), iteration)
@@ -515,7 +507,7 @@ class DeepInversionClass(object):
                 print("[UNWEIGHTED] mAP VERIFIER {}".format(mean_ap))
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_teacher
-                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets)
+                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets, self.nms_params)
                 self.writer.add_scalar("unweighted/mAP TEACHER", float(mean_ap), iteration)
                 self.writer.add_scalar("unweighted/mF1 TEACHER", float(mean_f1), iteration)
                 self.writer.add_scalar("unweighted/mPrec TEACHER", float(mean_precision), iteration)
@@ -526,8 +518,8 @@ class DeepInversionClass(object):
                 self.txtwriter.write("unweighted/mRec TEACHER {}\n".format(float(mean_recall)))
                 print("[UNWEIGHTED] mAP TEACHER {}".format(mean_ap))
 
-                im_boxes_teacher = run_inference(self.net_teacher, im_copy) # Add bounding boxes to generated images
-                im_boxes_verifier= run_inference(self.net_verifier, im_copy) # Add bounding boxes to generated images
+                im_boxes_teacher = run_inference(self.net_teacher, im_copy, self.nms_params) # Add bounding boxes to generated images
+                im_boxes_verifier= run_inference(self.net_verifier, im_copy,self.nms_params) # Add bounding boxes to generated images
                 # self.save_image(
                 #     batch_tens =im_boxes_teacher,
                 #     loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)), 
@@ -568,15 +560,8 @@ class DeepInversionClass(object):
             pilim.save(loc)
 
     def generate_batch(self, targets, init):
-        
         self.net_teacher.eval()
         generatedImages = self.get_images(targets, init)
-
-        # Copy folder from self.path to self.origpath 
-        if "NGC_JOB_ID" in os.environ: 
-            print("NGC: Moving folder from {} to {}".format(self.path, self.origpath))
-            shutil.move(self.path, self.origpath)
-
         return generatedImages
 
     def cache_batch_stats(self, imgs): 
