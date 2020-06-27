@@ -17,7 +17,7 @@ import random
 from PIL import Image 
 
 from deepinversion_yolo import DeepInversionClass
-from models.yolo.yolostuff import get_model_and_targets, run_inference, calculate_metrics, get_verifier, convert_to_coco, draw_targets
+from models.yolo.yolostuff import get_model_and_targets, inference, get_verifier, convert_to_coco, draw_targets
 
 def create_folder(directory):
     if not os.path.exists(directory):
@@ -113,20 +113,16 @@ def run(args):
 
     # Save the input image to disk
     imgs = imgs.float() / 255.0
-    imgs_with_boxes = run_inference(net, imgs, args.nms_params)
-    imgs_with_boxes_verifier = run_inference(net_verifier, imgs, args.nms_params)
     imgs_with_boxes_targets  = draw_targets(imgs, targets)
-    DeepInversionEngine.save_image(imgs_with_boxes, os.path.join(DeepInversionEngine.path, "input_image_teacher.jpg"), halfsize=False)
-    DeepInversionEngine.save_image(imgs_with_boxes_verifier, os.path.join(DeepInversionEngine.path, "input_image_verifier.jpg"), halfsize=False)
-    DeepInversionEngine.save_image(imgs_with_boxes_targets, os.path.join(DeepInversionEngine.path, "input_image_targets.jpg"), halfsize=False)
+    DeepInversionEngine.save_image(imgs_with_boxes_targets, os.path.join(DeepInversionEngine.path, "real_image_targets.jpg"), halfsize=False)
 
-    # Calculate metrics 
-    _, _, mean_ap_verifier, mean_f1_verifier = calculate_metrics(net_verifier, imgs, targets, args.nms_params)
-    DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mAP: {} \n".format(float(mean_ap_verifier)))
-    DeepInversionEngine.txtwriter.write("[VERIFIER] Real image mF1: {} \n".format(float(mean_f1_verifier)))
-    _, _, mean_ap_net, mean_f1_net = calculate_metrics(net, imgs, targets, args.nms_params)
-    DeepInversionEngine.txtwriter.write("[NET] Real image mAP: {} \n".format(float(mean_ap_net)))
-    DeepInversionEngine.txtwriter.write("[NET] Real image mF1: {} \n".format(float(mean_f1_net)))
+    # Inference on real image
+    mPrec, mRec, mAP, mF1, imgs_with_boxes_verif = inference(net_verifier, imgs, targets, args.nms_params)
+    DeepInversionEngine.txtwriter.write("Verifier RealImage mPrec: {:.4} mRec: {:.4} mAP: {:.4} mF1: {:.4} \n".format(mPrec, mRec, mAP, mF1))
+    mPrec, mRec, mAP, mF1, imgs_with_boxes_teach = inference(net, imgs, targets, args.nms_params)
+    DeepInversionEngine.txtwriter.write("Teacher RealImage mPrec: {:.4} mRec: {:.4} mAP: {:.4} mF1: {:.4} \n".format(mPrec, mRec, mAP, mF1))
+    DeepInversionEngine.save_image(imgs_with_boxes_verif, os.path.join(DeepInversionEngine.path, "real_image_verifier.jpg"), halfsize=False)
+    DeepInversionEngine.save_image(imgs_with_boxes_teach, os.path.join(DeepInversionEngine.path, "real_image_teacher.jpg"), halfsize=False)
 
     # TV value for real data 
     from deepinversion_yolo import get_image_prior_losses 
@@ -149,12 +145,12 @@ def run(args):
         print("Overwriting cached_mean and cached_var with batch stats of real data") 
         DeepInversionEngine.txtwriter.write("[CACHE_BATCH_STATS] Overwriting cached_mean and cached_var with batch stats of real data\n")
 
-
     generatedImages = DeepInversionEngine.generate_batch(targets, init)
     generatedImages_with_targets = draw_targets(generatedImages, targets)
-    generatedImages_with_preds   = run_inference(net_verifier, generatedImages, args.nms_params)
     DeepInversionEngine.save_image(generatedImages_with_targets, os.path.join(DeepInversionEngine.path, "inverted_with_targets.jpg"), halfsize=False)
-    DeepInversionEngine.save_image(generatedImages_with_preds,   os.path.join(DeepInversionEngine.path, "inverted_with_preds.jpg"), halfsize=False)
+    mPrec, mRec, mAP, mF1, generatedImages_with_boxes_verif = inference(net_verifier, generatedImages, targets, args.nms_params)
+    DeepInversionEngine.save_image(generatedImages_with_boxes_verif, os.path.join(DeepInversionEngine.path, "inverted_with_preds.jpg"), halfsize=False)
+    DeepInversionEngine.txtwriter.write("Verifier GeneratedImage mPrec: {:.4} mRec: {:.4} mAP: {:.4} mF1: {:.4} \n".format(mPrec, mRec, mAP, mF1))
 
     # Store image checkpoint (useful for multi-scale generation)
     chkpt = {"images":generatedImages, "targets":targets, "origimages": imgs, "imgspaths":imgspaths}

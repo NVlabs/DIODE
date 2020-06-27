@@ -12,7 +12,7 @@ from PIL import Image
 import numpy as np
 from tensorboardX import SummaryWriter
 import os, sys, json
-from models.yolo.yolostuff import run_inference, calculate_metrics, flip_targets, jitter_targets, random_erase_masks
+from models.yolo.yolostuff import flip_targets, jitter_targets, random_erase_masks, inference
 
 
 def lr_policy(lr_fn):
@@ -314,6 +314,10 @@ class DeepInversionClass(object):
         print("tboard writer in {}".format(self.writer.logdir))
         print("Text   writer in {}".format(self.txtwriter.name))
     
+    def __del__(self):
+        # destructor
+        self.txtwriter.close()
+        self.writer.close()
 
     def get_images(self, targets, init):
         
@@ -495,42 +499,29 @@ class DeepInversionClass(object):
                 im_copy = inputs.clone().detach().cpu()
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_verifier
-                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_verifier, inputs, targets, self.nms_params)
-                self.writer.add_scalar("unweighted/mAP VERIFIER", float(mean_ap), iteration)
-                self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mean_f1), iteration)
-                self.writer.add_scalar("unweighted/mPrec VERIFIER", float(mean_precision), iteration)
-                self.writer.add_scalar("unweighted/mRec VERIFIER", float(mean_recall), iteration)
-                self.txtwriter.write("unweighted/mAP VERIFIER {}\n".format(float(mean_ap)))
-                self.txtwriter.write("unweighted/mF1 VERIFIER {}\n".format(float(mean_f1)))
-                self.txtwriter.write("unweighted/mPrec VERIFIER {}\n".format(float(mean_precision)))
-                self.txtwriter.write("unweighted/mRec VERIFIER {}\n".format(float(mean_recall)))
-                print("[UNWEIGHTED] mAP VERIFIER {}".format(mean_ap))
+                mPrec, mRec, mAP, mF1, im_boxes_verif = inference(self.net_verifier, inputs, targets, self.nms_params)
+                self.writer.add_scalar("unweighted/mAP VERIFIER", float(mAP), iteration)
+                self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mF1), iteration)
+                self.writer.add_scalar("unweighted/mPrec VERIFIER", float(mPrec), iteration)
+                self.writer.add_scalar("unweighted/mRec VERIFIER", float(mRec), iteration)
+                self.txtwriter.write("Verifier InvImage mPrec: {:.4} mRec: {:.4} mAP: {:.4} mF1: {:.4} \n".format(mPrec, mRec, mAP, mF1))
+                print("[UNWEIGHTED] mAP VERIFIER {:.4}".format(mAP))
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_teacher
-                mean_precision, mean_recall, mean_ap, mean_f1 = calculate_metrics(self.net_teacher, inputs, targets, self.nms_params)
-                self.writer.add_scalar("unweighted/mAP TEACHER", float(mean_ap), iteration)
-                self.writer.add_scalar("unweighted/mF1 TEACHER", float(mean_f1), iteration)
-                self.writer.add_scalar("unweighted/mPrec TEACHER", float(mean_precision), iteration)
-                self.writer.add_scalar("unweighted/mRec TEACHER", float(mean_recall), iteration)
-                self.txtwriter.write("unweighted/mAP TEACHER {}\n".format(float(mean_ap)))
-                self.txtwriter.write("unweighted/mF1 TEACHER {}\n".format(float(mean_f1)))
-                self.txtwriter.write("unweighted/mPrec TEACHER {}\n".format(float(mean_precision)))
-                self.txtwriter.write("unweighted/mRec TEACHER {}\n".format(float(mean_recall)))
-                print("[UNWEIGHTED] mAP TEACHER {}".format(mean_ap))
+                mPrec, mRec, mAP, mF1, im_boxes_teach = inference(self.net_teacher, inputs, targets, self.nms_params)
+                self.writer.add_scalar("unweighted/mAP TEACHER", float(mAP), iteration)
+                self.writer.add_scalar("unweighted/mF1 TEACHER", float(mF1), iteration)
+                self.writer.add_scalar("unweighted/mPrec TEACHER", float(mPrec), iteration)
+                self.writer.add_scalar("unweighted/mRec TEACHER", float(mRec), iteration)
+                self.txtwriter.write("Teacher InvImage mPrec: {:.4} mRec: {:.4} mAP: {:.4} mF1: {:.4} \n".format(mPrec, mRec, mAP, mF1))
+                print("[UNWEIGHTED] mAP TEACHER {:.4}".format(mAP))
 
-                im_boxes_teacher = run_inference(self.net_teacher, im_copy, self.nms_params) # Add bounding boxes to generated images
-                im_boxes_verifier= run_inference(self.net_verifier, im_copy,self.nms_params) # Add bounding boxes to generated images
-                # self.save_image(
-                #     batch_tens =im_boxes_teacher,
-                #     loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)), 
-                #     halfsize=False
-                # )
                 self.save_image(
-                    batch_tens =im_boxes_verifier,
+                    batch_tens =im_boxes_verif,
                     loc   = os.path.join(self.path, "iteration_verifier_{}.jpg".format(iteration)), 
                     halfsize=False
                 )
-                del im_copy, im_boxes_teacher, im_boxes_verifier
+                del im_copy, im_boxes_teach, im_boxes_verif
                 torch.cuda.empty_cache()
 
             # optimizer.state = collections.defaultdict(dict)
@@ -538,7 +529,6 @@ class DeepInversionClass(object):
 
         # to reduce memory consumption by states of the optimizer
         # optimizer.state = collections.defaultdict(dict)
-        self.txtwriter.close()
         return inputs.clone().detach().cpu()
 
     def save_image(self, batch_tens, loc, halfsize=True): 

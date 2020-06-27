@@ -26,52 +26,6 @@ hyp = {'giou': 3.54,  # giou loss gain
        'scale': 0.05 * 0,  # image scale (+/- gain)
        'shear': 0.641 * 0}  # image shear (+/- deg)
 
-def run_inference(net, batch_tens, nms_params = {"iou_thres":0.5, "conf_thres":0.01}):
-
-    imgs = batch_tens.clone().detach().cuda()
-    net.eval()
-
-    # Get colors + names of classes
-    with open("./models/yolo/names.pkl", "rb") as f:
-        names = pickle.load(f)
-    with open("./models/yolo/colors.pkl", "rb") as f:
-        colors = pickle.load(f)
-
-    # Inference
-    with torch.no_grad():
-        pred = net(imgs)[0] # (batchsize, bboxes, 85)
-
-        # Apply NMS
-        # Confidence threshold: 0.01 for speed, 0.001 for best mAP
-        pred = non_max_suppression(pred, nms_params["conf_thres"], nms_params["iou_thres"], classes=None, agnostic=False)
-
-    # Plot bounding boxes on each image
-    imgs_with_boxes = []
-    for idx, det in enumerate(pred):
-
-        img_np = imgs[idx].clone().detach().cpu().numpy()
-        img_np = np.transpose(img_np, axes=(1,2,0))
-        img_np = (img_np * 255).astype(np.uint8)
-        img_np = np.ascontiguousarray(img_np, dtype=np.uint8)
-
-        # Plot boundingboxes for this image
-        if det is not None:
-            for *xyxy, conf, cls in det:
-                label = '%s %.2f' % (names[int(cls)], conf)
-                plot_one_box(xyxy, img_np, label=label, color=colors[int(cls)])
-        else:
-            # print("[INFERENCE] NoneType found in Prediction skipping drawing boxes on this image idx {}".format(idx))
-            pass
-
-        imgs_with_boxes.append(np.transpose(img_np, axes=(2,0,1)))
-    imgs_with_boxes = np.array(imgs_with_boxes).astype(np.float32) / 255.0
-    imgs_with_boxes = torch.from_numpy(imgs_with_boxes)
-
-    del pred
-    torch.cuda.empty_cache()
-
-    return imgs_with_boxes
-
 
 def get_model_and_targets(
         img_size=320, batch_size=64, load_pickled=True, shuffle=False,
@@ -146,7 +100,7 @@ def get_model_and_targets(
 
     return model, (imgs, targets, imgspaths), compute_loss
 
-def calculate_metrics(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01}):
+def inference(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01}):
     """
     Calculate iou metrics on network using imgs and corresponding targets
     """
@@ -155,12 +109,40 @@ def calculate_metrics(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thr
     # Enable inference
     net.eval()
 
-    # Inference
+    # Forward + nms
     with torch.no_grad():
         preds = net(imgs)[0] # (batchsize, bboxes, 85)
         # Apply NMS
         # Confidence threshold: 0.01 for speed, 0.001 for best mAP
         output = non_max_suppression(preds, nms_params["conf_thres"], nms_params["iou_thres"], classes=None, agnostic=False)
+
+    # Get colors + names of classes
+    with open("./models/yolo/names.pkl", "rb") as f:
+        names = pickle.load(f)
+    with open("./models/yolo/colors.pkl", "rb") as f:
+        colors = pickle.load(f)
+
+    # Plot bounding boxes on each image
+    imgs_with_boxes = []
+    for idx, det in enumerate(output):
+
+        img_np = imgs[idx].clone().detach().cpu().numpy()
+        img_np = np.transpose(img_np, axes=(1,2,0))
+        img_np = (img_np * 255).astype(np.uint8)
+        img_np = np.ascontiguousarray(img_np, dtype=np.uint8)
+
+        # Plot boundingboxes for this image
+        if det is not None:
+            for *xyxy, conf, cls in det:
+                label = '%s %.2f' % (names[int(cls)], conf)
+                plot_one_box(xyxy, img_np, label=label, color=colors[int(cls)])
+        else:
+            # print("[INFERENCE] NoneType found in Prediction skipping drawing boxes on this image idx {}".format(idx))
+            pass
+
+        imgs_with_boxes.append(np.transpose(img_np, axes=(2,0,1)))
+    imgs_with_boxes = np.array(imgs_with_boxes).astype(np.float32) / 255.0
+    imgs_with_boxes = torch.from_numpy(imgs_with_boxes)
 
     # hyperparameters
     batch_size, _, height, width = imgs.shape
@@ -220,13 +202,10 @@ def calculate_metrics(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thr
     mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean()
     nt = np.bincount(stats[3].astype(np.int64), minlength=net.nc)  # number of targets per class
 
-    # print("MP: {} MR: {} MAP: {} MF1: {}".format(mp, mr, map, mf1))
-    # print("Number of targets per class: {}".format(nt))
-
     # save memory
     del output, preds
     torch.cuda.empty_cache()
-    return mp, mr, map, mf1
+    return float(mp), float(mr), float(map), float(mf1), imgs_with_boxes
 
 def get_verifier(img_size=320):
     # params
