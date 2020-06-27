@@ -17,7 +17,8 @@ import random
 from PIL import Image 
 
 from deepinversion_yolo import DeepInversionClass
-from models.yolo.yolostuff import get_model_and_targets, inference, get_verifier, convert_to_coco, draw_targets
+from models.yolo.yolostuff import load_model, load_batch, inference, convert_to_coco, draw_targets
+from models.yolo.utils import compute_loss as criterion
 
 def create_folder(directory):
     if not os.path.exists(directory):
@@ -30,16 +31,10 @@ def set_all_seeds(seeds):
 
 def run(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
-
-    net, (imgs, targets, imgspaths), loss_fun = get_model_and_targets(
-        img_size=args.resolution[0], batch_size=args.bs,
-        load_pickled=False, shuffle=args.shuffle,
-        train_txt_path=args.train_txt_path)
-
-    net = net.to(device)
-    net_verifier = get_verifier()
-    net_verifier = net_verifier.to(device)
-
+    import pdb; pdb.set_trace()
+    net = load_model(cfg='./models/yolo/cfg/yolov3.cfg', weights='./models/yolo/yolov3.pt').to(device)
+    net_verifier = load_model(cfg='./models/yolo/cfg/yolov3-tiny.cfg', weights='./models/yolo/yolov3-tiny.pt').to(device)
+    imgs, targets, imgspaths = load_batch(args.train_txt_path, args.bs, args.resolution[0], args.shuffle)
     net.eval() 
     net_verifier.eval()
 
@@ -68,7 +63,6 @@ def run(args):
     # criterion = nn.MSELoss()
     # criterion = nn.L1Loss()
     # criterion = functools.partial(Triterion, loss_weights={"bbox":0.0, "cov":1.0, "orient":0.0})
-    criterion = loss_fun
     # criterion = Triterion(loss_weights={"bbox":1.0, "cov":1.0, "orient":0.0})  
 
     coefficients = dict()

@@ -26,79 +26,29 @@ hyp = {'giou': 3.54,  # giou loss gain
        'scale': 0.05 * 0,  # image scale (+/- gain)
        'shear': 0.641 * 0}  # image shear (+/- deg)
 
-
-def get_model_and_targets(
-        img_size=320, batch_size=64, load_pickled=True, shuffle=False,
-        train_txt_path="/home/achawla/akshayws/lpr_deep_inversion/models/yolo/5k_fullpath.txt"):
-
-    # params
-    cfg = "./models/yolo/cfg/yolov3.cfg"
-    data = "data/coco2014.data"
-    weights = "./models/yolo/yolov3.pt"
-    cpu_device = torch.device("cpu")
-    gpu_device = torch.device("cuda:0")
-    num_workers = 0
-    nc = 80
-    arc = "default"
-
-    # models
-    model = Darknet(cfg, img_size)
-    model.load_state_dict(torch.load(weights, map_location=cpu_device)['model'])
-
-    # Datasets + DataLoaders
-    if (len(glob.glob("./serialized_dict.pkl")) == 1) and load_pickled:
-        print("Loading seed data from serialized_dict.pkl")
-        with open("serialized_dict.pkl", "rb") as f:
-            serialized_dict = pickle.load(f)
-        imgs = torch.from_numpy(serialized_dict["imgs"])
-        targets = torch.from_numpy(serialized_dict["targets"])
-        labels = serialized_dict["labels"]
-        imgspaths = None
-        assert batch_size <= imgs.shape[0], "ERROR: pickled data bsize: {} , required bsize: {}, Insufficient data".format(imgs.shape[0], batch_size)
-        if batch_size < imgs.shape[0]:
-            import warnings
-            excess_data_warning_str = "loaded pickled data has bsize: {} , required bsize:  {} , So clipping out extra data".format(imgs.shape[0], batch_size)
-            warnings.warn(excess_data_warning_str)
-            imgs = imgs[0:batch_size]
-            targets = targets[ targets[:,0] < batch_size ] # targets[0,:] = (batch_idx, class, x, y, w, h)
-    else:
-        print("Loading seed data from Full Dataloader")
-        assert os.path.isfile(train_txt_path)
-        dataset = LoadImagesAndLabels(train_txt_path, img_size, batch_size,
-                                    augment=False,
-                                    hyp=hyp,  # augmentation hyperparameters
-                                    rect=False,  # rectangular training
-                                    cache_images=False,
-                                    cache_labels=False,
-                                    single_cls=False)
-
-        dataloader = torch.utils.data.DataLoader(dataset,
-                                                batch_size=batch_size,
-                                                num_workers=num_workers,
-                                                shuffle=shuffle,
-                                                pin_memory=True,
-                                                collate_fn=dataset.collate_fn)
-        # Get the data as well
-        _iter = iter(dataloader)
-        imgs, targets, imgspaths, _ = next(_iter)
-        labels = dataset.labels
-        serialized_dict = {
-            "imgs": imgs.detach().cpu().numpy(),
-            "targets": targets.detach().cpu().numpy(),
-            "labels": labels
-            }
-        # with open("serialized_dict.pkl", "wb") as f:
-        #     pickle.dump(serialized_dict, f)
-
-    # Attach extras to model
-    model.nc = nc  # attach number of classes to model
-    model.arc = arc  # attach yolo architecture
-    model.hyp = hyp  # attach hyperparameters to model
-    model.gr = 0.0  # giou loss ratio (obj_loss = 1.0 or giou)
-    # model.class_weights = labels_to_class_weights(labels, nc).to(gpu_device)  # attach class weights
+def load_model(cfg, weights, img_size=320):
+    net = Darknet(cfg, img_size)
+    net.load_state_dict(torch.load(weights, map_location=torch.device('cpu'))['model'])
+    net.nc = 80
+    net.arc = 'default'
+    net.hyp = hyp
+    net.gr = 0.0  # giou loss ratio (obj_loss = 1.0 or giou)
+    # model.class_weights = labels_to_class_weights(labels, nc).to(gpu_device)  # attach class weights, look at note
     # NOTE: class weights isn't used in compute_loss, so I guess its safe to remove it, plus removes dependence on labels
+    return net
 
-    return model, (imgs, targets, imgspaths), compute_loss
+
+def load_batch(train_txt_path, batch_size=64, img_size=320, shuffle=False):
+    dataset = LoadImagesAndLabels(train_txt_path, img_size, batch_size,
+                augment=False, hyp=hyp, rect=False, cache_images=False,
+                cache_labels=False, single_cls=False)
+    dataloader = torch.utils.data.DataLoader(dataset,
+                    batch_size=batch_size, num_workers=0,
+                    shuffle=shuffle, pin_memory=False,
+                    collate_fn=dataset.collate_fn)
+    imgs, targets, imgspaths, _ = next(iter(dataloader))
+    return imgs, targets, imgspaths
+
 
 def inference(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01}):
     """
@@ -207,27 +157,6 @@ def inference(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01
     torch.cuda.empty_cache()
     return float(mp), float(mr), float(map), float(mf1), imgs_with_boxes
 
-def get_verifier(img_size=320):
-    # params
-    verifier_cfg = "./models/yolo/cfg/yolov3-tiny.cfg"
-    weights = "./models/yolo/yolov3-tiny.pt"
-    cpu_device = torch.device("cpu")
-    gpu_device = torch.device("cuda:0")
-    num_workers = 0
-    nc = 80
-    arc = "default"
-
-    # verifiers
-    verifier = Darknet(verifier_cfg, img_size)
-    verifier.load_state_dict(torch.load(weights, map_location=cpu_device)['model'])
-
-    verifier.nc = nc  # attach number of classes to verifier
-    verifier.arc = arc  # attach yolo architecture
-    verifier.hyp = hyp  # attach hyperparameters to verifier
-    verifier.gr = 0.0  # giou loss ratio (obj_loss = 1.0 or giou)
-    # verifier.class_weights = labels_to_class_weights(labels, nc).to(gpu_device)  # attach class weights
-
-    return verifier
 
 def flip_targets(targets, horizontal=True, vertical=False):
     """
