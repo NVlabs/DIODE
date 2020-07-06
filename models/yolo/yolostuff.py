@@ -47,7 +47,7 @@ def load_batch(train_txt_path, batch_size=64, img_size=320, shuffle=False):
                     shuffle=shuffle, pin_memory=False,
                     collate_fn=dataset.collate_fn)
     imgs, targets, imgspaths, _ = next(iter(dataloader))
-    return imgs, targets, imgspaths
+    return imgs.float()/255.0, targets, imgspaths
 
 
 def inference(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01}):

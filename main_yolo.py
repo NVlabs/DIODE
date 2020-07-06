@@ -31,7 +31,6 @@ def set_all_seeds(seeds):
 
 def run(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
-    import pdb; pdb.set_trace()
     net = load_model(cfg='./models/yolo/cfg/yolov3.cfg', weights='./models/yolo/yolov3.pt').to(device)
     net_verifier = load_model(cfg='./models/yolo/cfg/yolov3-tiny.cfg', weights='./models/yolo/yolov3-tiny.pt').to(device)
     imgs, targets, imgspaths = load_batch(args.train_txt_path, args.bs, args.resolution[0], args.shuffle)
@@ -91,7 +90,7 @@ def run(args):
     if args.init_chkpt.endswith(".pt"):
         initchkpt = torch.load(args.init_chkpt, map_location=torch.device("cpu"))
         init = initchkpt["images"]
-        imgs = initchkpt["origimages"]*255.0
+        imgs = initchkpt["origimages"]
         targets = initchkpt["targets"]
         imgspaths = initchkpt["imgspaths"]
         init, imgs, imgspaths = init[0:args.bs], imgs[0:args.bs], imgspaths[0:args.bs]
@@ -100,13 +99,12 @@ def run(args):
             init = F.interpolate(init, size=(args.resolution[0], args.resolution[1]))
             imgs = F.interpolate(imgs, size=(args.resolution[0], args.resolution[1]))
     else:
-        init = torch.rand((args.bs, 3, args.resolution[0], args.resolution[1]), dtype=torch.float)
+        init = torch.randn((args.bs, 3, args.resolution[0], args.resolution[1]), dtype=torch.float)
         init = (args.init_scale * init) + args.init_bias
         init = (args.real_mixin_alpha)*imgs + (1.0-args.real_mixin_alpha)*init
     DeepInversionEngine.save_image(init, os.path.join(DeepInversionEngine.path, "initialization.jpg"), halfsize=True)
 
     # Save the input image to disk
-    imgs = imgs.float() / 255.0
     imgs_with_boxes_targets  = draw_targets(imgs, targets)
     DeepInversionEngine.save_image(imgs_with_boxes_targets, os.path.join(DeepInversionEngine.path, "real_image_targets.jpg"), halfsize=False)
 
