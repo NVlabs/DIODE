@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import collections
 from utils_di import create_folder, Logger
-import random, shutil
+import random, shutil, math
 import torch
 import torchvision.utils as vutils
 from apex import amp
@@ -80,11 +80,14 @@ class DeepInversionFeatureHook_fullfeatmse():
 
 
 class DeepInversionFeatureHook():
-    def __init__(self, module):
+    def __init__(self, module, p_norm=1):
         self.hook = module.register_forward_hook(self.hook_fn)
         self.cached_var = None 
         self.cached_mean = None
         self.cache_batch_stats = False
+        self.diff_mean = None
+        self.diff_vars = None
+        self.p_norm    = p_norm
 
     def hook_fn(self, module, input, output):
         # hook co compute deepinversion's feature distribution regularization
@@ -106,10 +109,11 @@ class DeepInversionFeatureHook():
                 self.cached_var  = module.running_var.data.clone().detach()     
                 self.cached_mean = module.running_mean.data.clone().detach() 
 
-            r_feature = torch.norm(self.cached_var.type(std.dtype) - std, 1) + torch.norm(
-                self.cached_mean.type(mean.dtype) - mean, 1)
-            # r_feature = torch.norm(module.running_var.data - std, 2) + torch.norm(
-            #     module.running_mean.data - mean, 2)
+            self.diff_mean  = torch.norm(self.cached_mean.type(mean.dtype) - mean, self.p_norm)
+            self.diff_vars  = torch.norm(self.cached_var.type(std.dtype) - std, self.p_norm)
+            r_feature       = self.diff_mean + self.diff_vars
+            # r_feature = r_feature / nch # normalize by the number of channels
+
         else:
             #probably a better way via minimizing KL divergence between two Gaussians
             #use KL div loss
@@ -269,6 +273,9 @@ class DeepInversionClass(object):
         self.beta1 = parameters["beta1"]
         self.beta2 = parameters["beta2"]
         self.nms_params = parameters["nms_params"]
+        self.cosine_layer_decay = parameters['cosine_layer_decay']
+        self.min_layers =  parameters['min_layers']
+        self.p_norm     =  parameters['p_norm']
 
         self.l1_reg = 0.0
         self.l2_reg = 0.0
@@ -306,7 +313,7 @@ class DeepInversionClass(object):
         self.loss_r_feature_layers = []
         for module in self.net_teacher.modules():
             if isinstance(module, nn.BatchNorm2d):
-                self.loss_r_feature_layers.append(DeepInversionFeatureHook(module))
+                self.loss_r_feature_layers.append(DeepInversionFeatureHook(module, self.p_norm))
         
         # Logging 
         self.writer = SummaryWriter(os.path.join(self.path, "logs"))
@@ -400,8 +407,13 @@ class DeepInversionClass(object):
             prior_loss_var_l1 = self.var_scale_l1 * prior_loss_var_l1 
             prior_loss_var_l2 = self.var_scale_l2 * prior_loss_var_l2 
 
-            # R_feature loss 
-            loss_r_feature = sum([mod.r_feature for mod in self.loss_r_feature_layers])
+            # R_feature loss (w/ cosine decay in optimizing number of layers)
+            numLayers = len(self.loss_r_feature_layers)
+            if self.cosine_layer_decay:
+                numLayers = math.cos((iteration / self.iterations) * (math.pi / 2.0)) # 1.0 --> 0.0
+                numLayers = int(numLayers * len(self.loss_r_feature_layers)) # 72 --> 0
+                numLayers = max(self.min_layers, numLayers)
+            loss_r_feature = torch.mean(torch.stack([mod.r_feature for mod in self.loss_r_feature_layers[0:numLayers]]))
             loss_r_feature_copy = loss_r_feature.clone().detach()
             loss_r_feature = self.bn_reg_scale * loss_r_feature 
             

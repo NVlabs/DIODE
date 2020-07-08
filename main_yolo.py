@@ -58,6 +58,9 @@ def run(args):
     parameters["beta1"] = args.beta1
     parameters["beta2"] = args.beta2
     parameters["nms_params"] = args.nms_params
+    parameters["cosine_layer_decay"] = args.cosine_layer_decay
+    parameters["min_layers"] = args.min_layers
+    parameters["p_norm"] = args.p_norm
 
     # criterion = nn.MSELoss()
     # criterion = nn.L1Loss()
@@ -191,6 +194,9 @@ def main():
     parser.add_argument("--random_erase", action="store_true", help="DA: randomly set rectangular regions to 0 during optizn")
 
     parser.add_argument('--r_feature', type=float, default=0.05, help='coefficient for feature distribution regularization')
+    parser.add_argument('--p_norm', type=int, default=1, help='p for the Lp norm used to calculate r_feature')
+    parser.add_argument('--cosine_layer_decay', action='store_true', help='use cosine decay for number of layers used to calculate r_feature')
+    parser.add_argument('--min_layers', type=int, default=1, help='minimum number of layers used to calculate r_feature when using cosine decay')
     parser.add_argument('--tv_l1', type=float, default=0.0, help='coefficient for total variation L1 loss')
     parser.add_argument('--tv_l2', type=float, default=0.0001, help='coefficient for total variation L2 loss')
     parser.add_argument('--lr', type=float, default=0.2, help='learning rate for optimization')
