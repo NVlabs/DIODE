@@ -259,7 +259,7 @@ def random_erase_masks(inputs_shape, return_cuda=True):
         masks = masks.cuda()
     return masks
 
-def convert_to_coco(inputs_tensor, targets):
+def convert_to_coco(inputs_tensor, targets=None):
     """
     Convert an inputs_tensor (bs x 3 x height x width) to #bs images in PIL format
     Convert targets loaded by a dataloader to plaintxt annotations in coco format
@@ -273,15 +273,17 @@ def convert_to_coco(inputs_tensor, targets):
     for batch_idx in range(len(images)):
         pil_images.append(Image.fromarray(images[batch_idx]))
 
-    targets = targets.clone().detach().cpu()
-    coco_targets = []
-    for batch_idx in range(len(images)):
-        imboxes = targets[targets[:,0]==batch_idx]
-        boxlist = []
-        for box in imboxes:
-            _box_str = "{} {:.6f} {:.6f} {:.6f} {:.6f}\n".format(int(box[1].item()), box[2].item(), box[3].item(), box[4].item(), box[5].item())
-            boxlist.append(_box_str)
-        coco_targets.append(boxlist)
+    coco_targets = [None] * len(images)
+    if targets is not None:
+        targets = targets.clone().detach().cpu()
+        coco_targets = []
+        for batch_idx in range(len(images)):
+            imboxes = targets[targets[:,0]==batch_idx]
+            boxlist = []
+            for box in imboxes:
+                _box_str = "{} {:.6f} {:.6f} {:.6f} {:.6f}\n".format(int(box[1].item()), box[2].item(), box[3].item(), box[4].item(), box[5].item())
+                boxlist.append(_box_str)
+            coco_targets.append(boxlist)
 
     assert len(coco_targets) == len(pil_images)
 

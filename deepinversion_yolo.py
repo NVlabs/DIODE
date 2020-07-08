@@ -11,8 +11,8 @@ from PIL import Image
 
 import numpy as np
 from tensorboardX import SummaryWriter
-import os, sys, json
-from models.yolo.yolostuff import flip_targets, jitter_targets, random_erase_masks, inference
+import os, sys, json, tempfile, subprocess
+from models.yolo.yolostuff import flip_targets, jitter_targets, random_erase_masks, inference, convert_to_coco
 
 
 def lr_policy(lr_fn):
@@ -548,18 +548,17 @@ class DeepInversionClass(object):
         Saves a batch_tens of images to location loc
         """ 
         print("Saving batch_tensor of shape {} to location: {}".format(batch_tens.shape, loc))
-        batch_tens = torch.clamp(batch_tens, min=0.0, max=1.0)
-        images = vutils.make_grid(batch_tens, nrow=8)
-        images = images.numpy() 
-        images = np.transpose(images, axes=(1,2,0))
-        
-        # Resize image to smaller size (to save memory)
-        pilim = Image.fromarray((images*255).astype(np.uint8)) 
-        pilim_half = pilim.resize(size=(pilim.size[0]//2, pilim.size[1]//2))
-        if halfsize:
-            pilim_half.save(loc)
-        else: 
-            pilim.save(loc)
+        pilImages, _ = convert_to_coco(batch_tens)
+        ht = batch_tens.shape[2]//2 if halfsize else batch_tens.shape[2]   # assume square images
+        pad = 1 if halfsize else 2
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            for bIdx, pilIm in enumerate(pilImages):
+                pilIm.save(os.path.join(tmpdirname, str(bIdx)+".jpg"))
+            montageProc = subprocess.run([
+                "montage", "{}/*.jpg".format(tmpdirname), "-background", "black",
+                "-geometry", "{}x{}+{}+{}".format(ht,ht,pad,pad), loc
+            ])
+            assert montageProc.returncode == 0
 
     def generate_batch(self, targets, init):
         self.net_teacher.eval()
