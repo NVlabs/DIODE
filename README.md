@@ -1,43 +1,77 @@
 ![Python 3.6](https://img.shields.io/badge/python-3.6-green.svg)
 
-## How to run for yolo: 
+
+## Introduction
+
+**Data-free Knowledge Distillation for Object Detection**<br>
+Akshay Chawla, Hongxu Yin, Pavlo Molchanov and Jose Alvarez<br>
+NVIDIA
+
+**Abstract:** We present DeepInversion for Object Detection (DIODE) to enable data-free knowledge distillation for neural networks trained on the object detection task. From a data-free perspective, DIODE synthesizes images given only an off-the-shelf pre-trained detection network and without any prior domain knowledge, generator network, or pre-computed activations. DIODE relies on two key components—first, an extensive set of differentiable augmentations to improve image fidelity and distillation effectiveness. Second, a novel automated bounding box and category sampling scheme for image synthesis enabling generating a large number of images with a diverse set of spatial and category objects. The resulting images enable data-free knowledge distillation from a teacher to a student detector, initialized from scratch. <br>
+In an extensive set of experiments, we demonstrate that DIODE’s ability to match the original training distribution consistently enables more effective knowledge distillation than out-of-distribution proxy datasets, which unavoidably occur in a data-free setup given the absence of the original domain knowledge.
+
+_**Todo**_ Please add link to pdf below<br>
+[[PDF](www.google.com)]
+
+![Core idea](images/coreidea.png "Core idea graphic")
+
+## Setup environment
+
+Install conda [[link](https://docs.conda.io/en/latest/)] python package manager then install the `lpr` environment and other packages as follows:
 ```
-$bash download_files.sh # dowloads a few files required for running deepinversion on yolo
-$./runner_yolo.sh # optimizes a batch of 64 images and stores it in ./yoloResults
+$ conda env create -f ./docker_environment/lpr_env.yml
+$ conda activate lpr
+$ conda install -y -c conda-forge opencv
+$ conda install -y tqdm
+$ git clone https://github.com/NVIDIA/apex
+$ cd apex
+$ pip install -v --no-cache-dir ./
 ```
 
-To use mean/var of a real batch of data instead of mean/var in bnorm parameters, uncomment 
-`--cache_batch_stats` flag in `runner_yolo.sh`. 
+Note: You may also generate a docker image based on provided Dockerfile `docker_environments/Dockerfile`.
 
-# Intro
+## How to run?
 
-Code for the paper:
+This repository allows for generating location and category conditioned images from an off-the-shelf Yolo-V3 object detection model.
 
-Dreaming to Distill: Data-free Knowledge Transfer via DeepInversion<br>
-Hongxu Yin, Pavlo Molchanov, Zhizhong Li, Jose M. Alvarez, Arun Mallya, Derek Hoiem, Niraj K. Jha and Jan Kautz<br>
-[[arXiv](https://arxiv.org/abs/1912.08795)]     [[PDF](https://arxiv.org/pdf/1912.08795.pdf)]     [[High quality PDF](https://drive.google.com/open?id=1Qgl18wbYmgcSdRdscqZeMCBqS1MFwgw7)]
+1. Download the directory *diode_yolo* from here: **ADD LINK TO UPLOADED DATASET HERE** (234 GB)
+2. Copy pre-trained yolo-v3 checkpoint and pickle files as follows:
+    ```
+    $cp /path/to/diode_yolo/pretrained/names.pkl /pathto/lpr_deep_inversion/models/yolo/
+    $cp /path/to/diode_yolo/pretrained/colors.pkl /pathto/lpr_deep_inversion/models/yolo/
+    $cp /path/to/diode_yolo/pretrained/yolov3-tiny.pt /pathto/lpr_deep_inversion/models/yolo/
+    $cp /path/to/diode_yolo/pretrained/yolov3-spp-ultralytics.pt /pathto/lpr_deep_inversion/models/yolo/
+    ```
+2. Extract the one-box dataset (single object per image) as follows: 
+    ```
+    $cd /path/to/diode_yolo
+    $tar xzf onebox/onebox.tgz -C /tmp
+    ```
+3. Confirm the the a folder `/tmp/onebox` containing the onebox dataset is present and has following directories and text file `manifest.txt`:
+    ```
+    $cd /tmp/onebox
+    $ls
+    images  labels  manifest.txt
+    ```
+4. Generate images from yolo-v3:
+    ```
+    $cd /path/to/lpr_deep_inversion
+    $chmod +x scripts/runner_yolo_multiscale.sh
+    $scripts/runner_yolo_multiscale.sh
+    ```
 
-Abstract: We introduce DeepInversion, a new method for synthesizing images from the image distribution used to train a deep neural network. We 'invert' a trained network (teacher) to synthesize class-conditional input images starting from random noise, without using any additional information about the training dataset. Keeping the teacher fixed, our method optimizes the input while regularizing the distribution of intermediate feature maps using information stored in the batch normalization layers of the teacher. Further, we improve the diversity of synthesized images using Adaptive DeepInversion, which maximizes the Jensen-Shannon divergence between the teacher and student network logits. The resulting synthesized images from networks trained on the CIFAR-10 and ImageNet datasets demonstrate high fidelity and degree of realism, and help enable a new breed of data-free applications - ones that do not require any real images or labeled data. We demonstrate the applicability of our proposed method to three tasks of immense practical importance -- (i) data-free network pruning, (ii) data-free knowledge transfer, and (iii) data-free continual learning.
 
-## How to run:
-This snippet will generate 84 images by inverting resnet50 model from torchvision package.
+![Images](images/yolov3.jpg "DIODE on Yolo-V3")
 
-`python main_imagenet.py --bs=84 --do_flip --exp_name="test_rn50_3" --r_feature=0.01 --arch_name="resnet50" --fp16 --verifier`
+## Citation
 
-Parameters:
+```
+@inproceedings{chawla2021diode,
+	title = {Data-free Knowledge Distillation for Object Detection},
+	author = {Chawla, Akshay and Yin, Hongxu and Molchanov, Pavlo and Alvarez, Jose M.},
+	booktitle = {The IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)},
+	month = January,
+	year = {2021}
+}
+```
 
-- `bs` - batch size, should be close to original batch size during training, but not necessary.
-- `do_flip` - will do random flipping between iterations
-- `exp_name` - name of the experiment, will create folder with this name in `./generations/` where intermediate generations will be stored after 100 iterations
-- `r_feature` - coefficient for feature distribution regularization, might need adjustment for other networks
-- `arch_name` - name of the network architecture, should be one of pretrained models from torch vision package: `resnet50`, `resnet18`, `mobilenetv2` etc. Code also supports resnet50v1.5 model which gives better image quality (can be downloaded from [here](https://drive.google.com/open?id=1zTHgCSbapEBYY_XCa-SRSPR0Jl8wkxJC), needs to be in `./models/resnet50v15/` and argument needs to be `resnet50v15`)
-- `fp16` - enables FP16 training, will use FP16 training equivalent to AMP O2 level
-- `verifier` - enables checking accuracy of generated images with `mobilenetv2` network after each 100 iterations. Useful to observe generalizability of generated images.
-
-After 3k iterations (~6 mins on V100) generation is done: `Verifier accuracy:  98.8%` and a grid of images look like:
-
-![Generated grid of images](images/resnet50.png "ResNet50 Inverted images")
-
-Large dataset of images inverted from ResNet50v1.5 model: [Nvidia Google Drive](https://drive.google.com/open?id=1AXCW6_E_Qtr5qyb9jygGaLub13gQo10c), best viewed with gThumb, organized by ImageNet classes (description of classes can be found here [link](https://gist.github.com/yrevar/942d3a0ac09ec9e5eb3a))
-
-To generate images without multi-resolution scheme we need to change `setting_id` to `1` when create an instance of DeepInversionClass. 

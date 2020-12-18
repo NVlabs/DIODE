@@ -183,9 +183,10 @@ def run(args):
         os.makedirs(os.path.join(args.path, "coco", "labels", "train2014"))
         pilImages, cocoTargets = convert_to_coco(generatedImages, targets)
         for pilim, cocotarget, imgpath in zip(pilImages, cocoTargets, imgspaths):
-            imgpath = os.path.basename(imgpath)
-            pilim.save(os.path.join(args.path, "coco", "images", "train2014", imgpath.replace(".jpg",".png")))
-            with open(os.path.join(args.path,"coco","labels","train2014",imgpath.replace(".jpg",".txt")),"wt") as f:
+            imgname = os.path.basename(imgpath) # get filename
+            imgname = os.path.splitext(imgname)[0] # remove .jpg/.png extension
+            pilim.save(os.path.join(args.path, "coco", "images", "train2014", imgname+".png"))
+            with open(os.path.join(args.path,"coco","labels","train2014",imgname+".txt"),"wt") as f:
                 if len(cocotarget)>0:
                     f.write(''.join(cocotarget).rstrip('\n'))
     # Save the args
