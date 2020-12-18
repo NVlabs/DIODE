@@ -8,7 +8,7 @@ echo "${CUDA_VISIBLE_DEVICES}"
 # This command generates 128 images of resolution 160x160
 ##############################################################
 
-rootlocation="/akshayws/finalcodetest/"
+rootlocation="./diode_results/"
 python -u main_yolo.py --resolution=160 --bs=128 \
 --jitter=20 --do_flip --rand_brightness --rand_contrast --random_erase \
 --path="${rootlocation}/${now}_res160" \

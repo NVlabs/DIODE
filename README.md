@@ -1,6 +1,3 @@
-![Python 3.6](https://img.shields.io/badge/python-3.6-green.svg)
-
-
 ## Introduction
 
 **Data-free Knowledge Distillation for Object Detection**<br>
@@ -37,31 +34,36 @@ This repository allows for generating location and category conditioned images f
 1. Download the directory *diode_yolo* from here: **ADD LINK TO UPLOADED DATASET HERE** (234 GB)
 2. Copy pre-trained yolo-v3 checkpoint and pickle files as follows:
     ```
-    $cp /path/to/diode_yolo/pretrained/names.pkl /pathto/lpr_deep_inversion/models/yolo/
-    $cp /path/to/diode_yolo/pretrained/colors.pkl /pathto/lpr_deep_inversion/models/yolo/
-    $cp /path/to/diode_yolo/pretrained/yolov3-tiny.pt /pathto/lpr_deep_inversion/models/yolo/
-    $cp /path/to/diode_yolo/pretrained/yolov3-spp-ultralytics.pt /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/diode_yolo/pretrained/names.pkl /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/diode_yolo/pretrained/colors.pkl /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/diode_yolo/pretrained/yolov3-tiny.pt /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/diode_yolo/pretrained/yolov3-spp-ultralytics.pt /pathto/lpr_deep_inversion/models/yolo/
     ```
 2. Extract the one-box dataset (single object per image) as follows: 
     ```
-    $cd /path/to/diode_yolo
-    $tar xzf onebox/onebox.tgz -C /tmp
+    $ cd /path/to/diode_yolo
+    $ tar xzf onebox/onebox.tgz -C /tmp
     ```
 3. Confirm the the a folder `/tmp/onebox` containing the onebox dataset is present and has following directories and text file `manifest.txt`:
     ```
-    $cd /tmp/onebox
-    $ls
+    $ cd /tmp/onebox
+    $ ls
     images  labels  manifest.txt
     ```
 4. Generate images from yolo-v3:
     ```
-    $cd /path/to/lpr_deep_inversion
-    $chmod +x scripts/runner_yolo_multiscale.sh
-    $scripts/runner_yolo_multiscale.sh
+    $ cd /path/to/lpr_deep_inversion
+    $ chmod +x scripts/runner_yolo_multiscale.sh
+    $ scripts/runner_yolo_multiscale.sh
     ```
 
 
 ![Images](images/yolov3.jpg "DIODE on Yolo-V3")
+
+## Notes:
+
+1. For ngc, use the provided bash script `scripts/diode_ngc_interactivejob.sh` to start an interactive ngc job with environment setup, code and data setup.
+2. To generate large dataset use bash script `scripts/LINE_looped_runner_yolo.sh`. 
 
 ## Citation
 
