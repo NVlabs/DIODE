@@ -64,6 +64,7 @@ This repository allows for generating location and category conditioned images f
 
 1. For ngc, use the provided bash script `scripts/diode_ngc_interactivejob.sh` to start an interactive ngc job with environment setup, code and data setup.
 2. To generate large dataset use bash script `scripts/LINE_looped_runner_yolo.sh`. 
+3. Check `knowledge_distillation` subfolder for code for knowledge distillation using generated datasets.
 
 ## Citation
 
