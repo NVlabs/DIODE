@@ -389,6 +389,9 @@ class DeepInversionClass(object):
             net_teacher, optimizer = amp.initialize(net_teacher, optimizer, opt_level="O1")
             self.net_verifier, _   = amp.initialize(self.net_verifier, [], opt_level="O1")
 
+        if self.box_sampler:
+            print("Fp sampler is enabled, targets will be updated with high confidence non-overlapping predictions")
+
         layer_wise_rfeat, layer_wise_mean, layer_wise_var = [], [], []
         for iteration in range(1,self.iterations+1):
             
