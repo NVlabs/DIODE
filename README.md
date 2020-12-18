@@ -44,7 +44,7 @@ This repository allows for generating location and category conditioned images f
     $ cd /path/to/diode_yolo
     $ tar xzf onebox/onebox.tgz -C /tmp
     ```
-3. Confirm the the a folder `/tmp/onebox` containing the onebox dataset is present and has following directories and text file `manifest.txt`:
+3. Confirm the folder `/tmp/onebox` containing the onebox dataset is present and has following directories and text file `manifest.txt`:
     ```
     $ cd /tmp/onebox
     $ ls
