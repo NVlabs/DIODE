@@ -5,6 +5,7 @@ import collections
 from utils_di import create_folder, Logger
 import random, shutil, math
 import torch
+import torchvision
 import torchvision.utils as vutils
 from apex import amp
 from PIL import Image
@@ -12,8 +13,8 @@ from PIL import Image
 import numpy as np
 from tensorboardX import SummaryWriter
 import os, sys, json, tempfile, subprocess
-from models.yolo.yolostuff import flip_targets, jitter_targets, random_erase_masks, inference, convert_to_coco
-
+from models.yolo.yolostuff import flip_targets, jitter_targets, random_erase_masks, inference, convert_to_coco, predictions_to_coco, draw_targets
+from models.yolo.utils import xywh2xyxy
 
 def lr_policy(lr_fn):
     def _alr(optimizer, iteration, epoch):
@@ -80,38 +81,41 @@ class DeepInversionFeatureHook_fullfeatmse():
 
 
 class DeepInversionFeatureHook():
-    def __init__(self, module, p_norm=1):
+    def __init__(self, module, p_norm=1, alpha_mean=1.0, alpha_var=1.0):
         self.hook = module.register_forward_hook(self.hook_fn)
-        self.cached_var = None 
+        self.cached_var  = None
         self.cached_mean = None
         self.cache_batch_stats = False
         self.diff_mean = None
-        self.diff_vars = None
+        self.diff_var  = None
         self.p_norm    = p_norm
+        self.alpha_mean, self.alpha_var = alpha_mean, alpha_var
+        self.ip_shape, self.op_shape = None, None
 
     def hook_fn(self, module, input, output):
         # hook co compute deepinversion's feature distribution regularization
         nch = input[0].shape[1]
         mean = input[0].mean([0, 2, 3])
-        std = input[0].permute(1, 0, 2, 3).contiguous().view([nch, -1]).var(1, unbiased=False)
+        var = input[0].permute(1, 0, 2, 3).contiguous().view([nch, -1]).var(1, unbiased=False)
+        self.ip_shape, self.op_shape = input[0].shape, output.shape
         if 1:
             #original paper
-            #forsing mean and variance to match between two distributions
+            #forsing mean and var to match between two distributions
             
             # Cache real batch statistics
             if self.cache_batch_stats: 
                 self.cached_mean = mean.clone().detach() 
-                self.cached_var  = std.clone().detach()
+                self.cached_var  = var.clone().detach()
                 self.cache_batch_stats = False
 
-            # Cache the mean/var from bnorm 
+            # Cache the mean/var from bnorm
             if (self.cached_mean is None) and (self.cached_var is None): 
                 self.cached_var  = module.running_var.data.clone().detach()     
                 self.cached_mean = module.running_mean.data.clone().detach() 
 
             self.diff_mean  = torch.norm(self.cached_mean.type(mean.dtype) - mean, self.p_norm)
-            self.diff_vars  = torch.norm(self.cached_var.type(std.dtype) - std, self.p_norm)
-            r_feature       = self.diff_mean + self.diff_vars
+            self.diff_var   = torch.norm(self.cached_var.type(var.dtype)   - var,  self.p_norm)
+            r_feature       = self.alpha_mean*self.diff_mean + self.alpha_var*self.diff_var
             # r_feature = r_feature / nch # normalize by the number of channels
 
         else:
@@ -119,7 +123,7 @@ class DeepInversionFeatureHook():
             #use KL div loss
             #from https://stats.stackexchange.com/questions/7440/kl-divergence-between-two-univariate-gaussians
             var_gt = module.running_var.data
-            var_est = std
+            var_est = var
             mean_gt = module.running_mean.data
             mean_est = mean
             #index 2 - estimated, index 1 - true
@@ -161,6 +165,23 @@ class DeepInversionFeatureHook_features():
             self.feature_loss = l2_loss * self.l2_reg
 
         # should not output anything
+
+    def close(self):
+        self.hook.remove()
+
+class SelfSimilarityHook():
+    def __init__(self, module, threshold=0.7):
+        self.ssim = None
+        self.hook = module.register_forward_hook(self.hook_fn)
+        self.threshold = threshold
+
+    def hook_fn(self, module, input, output):
+        features    = torch.nn.functional.adaptive_avg_pool2d(input[0], output_size=1).squeeze()
+        embeddings  = features / torch.norm(features, p=2, dim=1, keepdim=True)
+        ssim_matrix = torch.matmul(embeddings, embeddings.t())
+        ssim_matrix[ssim_matrix<self.threshold] = 0.0
+        eye         = torch.eye(ssim_matrix.shape[0], dtype=ssim_matrix.dtype, device=ssim_matrix.device)
+        self.ssim   = torch.norm(ssim_matrix - eye, p=2)
 
     def close(self):
         self.hook.remove()
@@ -275,7 +296,11 @@ class DeepInversionClass(object):
         self.nms_params = parameters["nms_params"]
         self.cosine_layer_decay = parameters['cosine_layer_decay']
         self.min_layers =  parameters['min_layers']
+        self.num_layers =  parameters["num_layers"]
         self.p_norm     =  parameters['p_norm']
+        self.alpha_mean =  parameters['alpha_mean']
+        self.alpha_var  =  parameters['alpha_var']
+        self.alpha_ssim =  parameters["alpha_ssim"]
 
         self.l1_reg = 0.0
         self.l2_reg = 0.0
@@ -294,11 +319,21 @@ class DeepInversionClass(object):
         self.var_scale_l2 = coefficients["tv_l2"]
         self.wd_coeff = coefficients["wd"]
         self.lr = coefficients["lr"]
+        self.min_lr = coefficients["min_lr"]
         self.first_bn_coef = coefficients["first_bn_coef"]
         self.main_loss_multiplier = coefficients["main_loss_multiplier"]
         self.alpha_img_stats = coefficients["alpha_img_stats"]
         self.use_amp = use_amp
         self.path = path
+
+        # Bounding Box sampler
+        self.box_sampler        = parameters["box_sampler"]
+        self.box_sampler_warmup = parameters["box_sampler_warmup"]
+        self.box_sampler_conf   = parameters["box_sampler_conf"]
+        self.box_sampler_overlap_iou = parameters["box_sampler_overlap_iou"]
+        self.box_sampler_minarea= parameters["box_sampler_minarea"]
+        self.box_sampler_maxarea= parameters["box_sampler_maxarea"]
+        self.box_sampler_earlyexit = parameters["box_sampler_earlyexit"]
 
         create_folder(self.path)
         print("Results and logs will be stored at: {}".format(self.path))
@@ -311,9 +346,13 @@ class DeepInversionClass(object):
 
         # Add hooks for Batchnorm layers
         self.loss_r_feature_layers = []
-        for module in self.net_teacher.modules():
-            if isinstance(module, nn.BatchNorm2d):
-                self.loss_r_feature_layers.append(DeepInversionFeatureHook(module, self.p_norm))
+        for module_group in self.net_teacher.module_list[0:74]:
+            if isinstance(module_group, nn.Sequential):
+                self.loss_r_feature_layers.append(DeepInversionFeatureHook(module_group.BatchNorm2d, self.p_norm, self.alpha_mean, self.alpha_var))
+        print("num layers: {}".format(len(self.loss_r_feature_layers)))
+
+        # Add hook for self-similarity
+        self.ssim_hook = SelfSimilarityHook(net_teacher.module_list[53][0], threshold=0.0)
         
         # Logging 
         self.writer = SummaryWriter(os.path.join(self.path, "logs"))
@@ -327,8 +366,7 @@ class DeepInversionClass(object):
         self.writer.close()
 
     def get_images(self, targets, init):
-        
-        print("get_images call")
+
         net_teacher = self.net_teacher
         net_teacher.eval()
         save_every = self.save_every
@@ -343,24 +381,21 @@ class DeepInversionClass(object):
         
 
         optimizer = optim.Adam([inputs], lr=self.lr, betas=[self.beta1, self.beta2], weight_decay=self.wd_coeff)
-        lr_scheduler = lr_cosine_policy(self.lr, 100, self.iterations)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.iterations, eta_min=self.min_lr)
+        # lr_scheduler = lr_cosine_policy(self.lr, 10, self.iterations)
         # beta0_scheduler = mom_cosine_policy(0.9, 250, self.iterations)
         # beta1_scheduler = mom_cosine_policy(0.999, 250, self.iterations)
         if self.use_amp:
             net_teacher, optimizer = amp.initialize(net_teacher, optimizer, opt_level="O1")
             self.net_verifier, _   = amp.initialize(self.net_verifier, [], opt_level="O1")
 
+        layer_wise_rfeat, layer_wise_mean, layer_wise_var = [], [], []
         for iteration in range(1,self.iterations+1):
             
-            # print("iteration: {}".format(iteration))
-            lr_scheduler(optimizer, iteration, iteration)
-            # beta0_scheduler(optimizer, iteration, iteration, "betas", 0)
-            # beta1_scheduler(optimizer, iteration, iteration, "betas", 1)
+            scheduler.step()
+            # lr_scheduler(optimizer, iteration, iteration)
 
-            if self.mean_var_clip:
-                inputs.data = clip(inputs.data, use_amp=self.use_amp)
-
-            inputs_jit = inputs 
+            inputs_jit = torch.ones_like(inputs) * inputs
             targets_jit = targets.clone().detach() 
 
             # Random Jitter 
@@ -390,7 +425,6 @@ class DeepInversionClass(object):
                 inputs_jit *= masks
 
             # foward with jit images
-            inputs_jit = torch.clamp(inputs_jit, min=0.0, max=1.0)
             outputs = net_teacher(inputs_jit)
 
             outputs = self.network_output_function(outputs)
@@ -408,19 +442,27 @@ class DeepInversionClass(object):
             prior_loss_var_l2 = self.var_scale_l2 * prior_loss_var_l2 
 
             # R_feature loss (w/ cosine decay in optimizing number of layers)
-            numLayers = len(self.loss_r_feature_layers)
+            numLayers = len(self.loss_r_feature_layers) if self.num_layers==-1 else self.num_layers
             if self.cosine_layer_decay:
-                numLayers = math.cos((iteration / self.iterations) * (math.pi / 2.0)) # 1.0 --> 0.0
-                numLayers = int(numLayers * len(self.loss_r_feature_layers)) # 72 --> 0
+                _cos      = math.cos((iteration / self.iterations) * (math.pi / 2.0)) # 1.0 --> 0.0
+                numLayers = int(_cos * numLayers) # numLayers --> 0
                 numLayers = max(self.min_layers, numLayers)
-            loss_r_feature = torch.mean(torch.stack([mod.r_feature for mod in self.loss_r_feature_layers[0:numLayers]]))
+            loss_r_feature = torch.sum(torch.stack([mod.r_feature for mod in self.loss_r_feature_layers[0:numLayers]]))
             loss_r_feature_copy = loss_r_feature.clone().detach()
             loss_r_feature = self.bn_reg_scale * loss_r_feature 
-            
+
+            # layer wise losses
+            layer_wise_rfeat.append([mod.r_feature.item() for mod in self.loss_r_feature_layers])
+            layer_wise_mean.append([mod.diff_mean.item() for mod in self.loss_r_feature_layers])
+            layer_wise_var.append([mod.diff_var.item() for mod in self.loss_r_feature_layers])
+
             # R_feature loss layer_1
             loss_r_feature_first = sum([mod.r_feature for mod in self.loss_r_feature_layers[:1]])
             loss_r_feature_first_copy = loss_r_feature_first.clone().detach()
             loss_r_feature_first = self.first_bn_coef * loss_r_feature_first 
+
+            # Self similarity
+            ssim_loss = self.alpha_ssim * self.ssim_hook.ssim
 
             # # Match image stats
             # img_mean = inputs_jit.mean([2, 3])
@@ -433,7 +475,7 @@ class DeepInversionClass(object):
             # loss_img_stats_copy = loss_img_stats.clone().detach()
             # loss_img_stats *= self.alpha_img_stats
 
-            total_loss = task_loss + prior_loss_var_l1 + prior_loss_var_l2 + loss_r_feature + loss_r_feature_first # + loss_img_stats
+            total_loss = task_loss + prior_loss_var_l1 + prior_loss_var_l2 + loss_r_feature + loss_r_feature_first + ssim_loss # + loss_img_stats
 
             # To check if weight decay is working 
             inputs_norm = torch.norm(inputs) / inputs.shape[0] 
@@ -447,7 +489,12 @@ class DeepInversionClass(object):
             else:
                 total_loss.backward()
             optimizer.step()
-            
+
+            with torch.no_grad(): # projected g.d. (must be separated from backprop graph)
+                inputs.clamp_(min=0.0, max=1.0)
+            if self.mean_var_clip:
+                inputs.data = clip(inputs.data, use_amp=self.use_amp)
+
             # Write logs to tensorboard
 
             # Weighted Loss
@@ -511,7 +558,7 @@ class DeepInversionClass(object):
                 im_copy = inputs.clone().detach().cpu()
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_verifier
-                mPrec, mRec, mAP, mF1, im_boxes_verif = inference(self.net_verifier, inputs, targets, self.nms_params)
+                mPrec, mRec, mAP, mF1, im_boxes_verif, _ = inference(self.net_verifier, inputs, targets, self.nms_params)
                 self.writer.add_scalar("unweighted/mAP VERIFIER", float(mAP), iteration)
                 self.writer.add_scalar("unweighted/mF1 VERIFIER", float(mF1), iteration)
                 self.writer.add_scalar("unweighted/mPrec VERIFIER", float(mPrec), iteration)
@@ -520,7 +567,7 @@ class DeepInversionClass(object):
                 print("[UNWEIGHTED] mAP VERIFIER {:.4}".format(mAP))
 
                 # compute metrics (mp, mr, map, mf1) for the updated image on net_teacher
-                mPrec, mRec, mAP, mF1, im_boxes_teach = inference(self.net_teacher, inputs, targets, self.nms_params)
+                mPrec, mRec, mAP, mF1, im_boxes_teach, teacher_output = inference(self.net_teacher, inputs, targets, self.nms_params)
                 self.writer.add_scalar("unweighted/mAP TEACHER", float(mAP), iteration)
                 self.writer.add_scalar("unweighted/mF1 TEACHER", float(mF1), iteration)
                 self.writer.add_scalar("unweighted/mPrec TEACHER", float(mPrec), iteration)
@@ -528,37 +575,78 @@ class DeepInversionClass(object):
                 self.txtwriter.write("Teacher InvImage mPrec: {:.4} mRec: {:.4} mAP: {:.4} mF1: {:.4} \n".format(mPrec, mRec, mAP, mF1))
                 print("[UNWEIGHTED] mAP TEACHER {:.4}".format(mAP))
 
-                self.save_image(
-                    batch_tens =im_boxes_verif,
-                    loc   = os.path.join(self.path, "iteration_verifier_{}.jpg".format(iteration)), 
-                    halfsize=False
-                )
-                del im_copy, im_boxes_teach, im_boxes_verif
+                # Uncomment to save batch overlayed with teacher/verifier predictions
+                # self.save_image(
+                #     batch_tens =im_boxes_verif,
+                #     loc   = os.path.join(self.path, "iteration_verifier_{}.jpg".format(iteration)),
+                #     halfsize=False
+                # )
+                # self.save_image(
+                #     batch_tens =im_boxes_teach,
+                #     loc   = os.path.join(self.path, "iteration_teacher_{}.jpg".format(iteration)),
+                #     halfsize=False
+                # )
+
+
+                # FP sampling
+                if self.box_sampler and (iteration >= self.box_sampler_warmup) and (iteration<=self.box_sampler_earlyexit):
+                    new_targets = predictions_to_coco(teacher_output, im_copy)
+                    new_targets = new_targets[new_targets[:,2] > self.box_sampler_conf] # filter targets by confidence threshold
+                    new_targets = torch.index_select(new_targets, dim=1, index=torch.tensor([0,1,3,4,5,6])) # # remove confidence value
+
+                    to_add = torch.zeros((len(new_targets),), dtype=torch.long).cuda()
+                    batch_size = im_copy.shape[0]
+                    for batchIdx in range(batch_size):
+                        _targets = targets[targets[:,0]==batchIdx]
+                        _new_targets = new_targets[new_targets[:,0]==batchIdx]
+                        if _new_targets.shape[0] > 0:
+
+                            ious = torchvision.ops.box_iou(
+                                xywh2xyxy(_new_targets[:,2:].cuda()),
+                                xywh2xyxy(_targets[:,2:])
+                            )
+                            max_ious, _ = torch.max(ious, dim=1)
+                            _to_add     = (max_ious < self.box_sampler_overlap_iou).long() # condition: if pred has <0.2 overlap w/ any gt box, add to targets
+                            to_add[new_targets[:,0]==batchIdx] += _to_add
+
+                    new_targets = new_targets[to_add.bool()]
+                    assert len(new_targets) == to_add.sum().item()
+                    # filter by area
+                    areas = new_targets[:,-1] * new_targets[:,-2]
+                    area_limit_idcs = (areas < self.box_sampler_maxarea) * (areas > self.box_sampler_minarea)
+                    new_targets = new_targets[area_limit_idcs.bool()]
+                    print("Fp sampling: Adding {} new targets to batch for iteration: {} ".format(len(new_targets), iteration))
+                    targets = torch.cat((targets, new_targets.cuda()), dim=0)
+
+                # Save batch overlayed with provided and fp-sampled targets
+                imgs_with_boxes_targets  = draw_targets(im_copy, targets)
+                self.save_image(imgs_with_boxes_targets,os.path.join(self.path, "iteration_targets_{}.jpg".format(iteration)), halfsize=False)
+
+                del im_copy, im_boxes_teach, im_boxes_verif, imgs_with_boxes_targets
                 torch.cuda.empty_cache()
 
-            # optimizer.state = collections.defaultdict(dict)
+            if self.box_sampler and iteration>=self.box_sampler_earlyexit:
+                print("early exit on {} iteration".format(iteration))
+                break
 
+        # Save tracked mean/std
+        tracker_dict = {
+            "mean"  : torch.tensor(layer_wise_mean),
+            "var"   : torch.tensor(layer_wise_var),
+            "rfeat" : torch.tensor(layer_wise_rfeat),
+            "input_shape" : [mod.ip_shape for mod in self.loss_r_feature_layers],
+            "output_shape" : [mod.op_shape for mod in self.loss_r_feature_layers]
+        }
+        torch.save(tracker_dict, os.path.join(self.path, "tracker.data"))
 
-        # to reduce memory consumption by states of the optimizer
-        # optimizer.state = collections.defaultdict(dict)
-        return inputs.clone().detach().cpu()
+        return inputs.clone().detach().cpu(), targets.clone().detach().cpu()
 
     def save_image(self, batch_tens, loc, halfsize=True): 
         """
         Saves a batch_tens of images to location loc
         """ 
         print("Saving batch_tensor of shape {} to location: {}".format(batch_tens.shape, loc))
-        pilImages, _ = convert_to_coco(batch_tens)
-        ht = batch_tens.shape[2]//2 if halfsize else batch_tens.shape[2]   # assume square images
-        pad = 1 if halfsize else 2
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            for bIdx, pilIm in enumerate(pilImages):
-                pilIm.save(os.path.join(tmpdirname, str(bIdx)+".jpg"))
-            montageProc = subprocess.run([
-                "montage", "{}/*.jpg".format(tmpdirname), "-background", "black",
-                "-geometry", "{}x{}+{}+{}".format(ht,ht,pad,pad), loc
-            ])
-            assert montageProc.returncode == 0
+        vutils.save_image(batch_tens, loc, normalize=False)
 
     def generate_batch(self, targets, init):
         self.net_teacher.eval()
@@ -572,23 +660,23 @@ class DeepInversionClass(object):
         self.net_teacher.eval() 
         self.net_verifier.eval()
         # Enable caching of real img batch stats
-        for bnorm_hook in self.loss_r_feature_layers: 
+        for bnorm_hook in self.loss_r_feature_layers:
             assert bnorm_hook.cache_batch_stats == False
             bnorm_hook.cache_batch_stats = True
         # Cache
         with torch.no_grad():
-            _preds = self.net_teacher(imgs) 
+            _preds = self.net_teacher(imgs)
         del _preds
         # Verify 
-        for bnorm_hook in self.loss_r_feature_layers: 
-            assert bnorm_hook.cache_batch_stats == False 
-            assert bnorm_hook.cached_mean is not None 
+        for bnorm_hook in self.loss_r_feature_layers:
+            assert bnorm_hook.cache_batch_stats == False
+            assert bnorm_hook.cached_mean is not None
             assert bnorm_hook.cached_var  is not None
 
             # The code below is useful for full-feature mse loss instead of batch-norm regularization loss
             # assert isinstance(bnorm_hook.cached_feats, torch.cuda.FloatTensor) \
-            # , "Not a TENSOR! Found {}".format(type(bnorm_hook.cached_feats)) 
-            # assert bnorm_hook.cached_feats.shape[0] == self.bs 
+            # , "Not a TENSOR! Found {}".format(type(bnorm_hook.cached_feats))
+            # assert bnorm_hook.cached_feats.shape[0] == self.bs
 
 
 

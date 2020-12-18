@@ -153,9 +153,9 @@ def inference(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01
     nt = np.bincount(stats[3].astype(np.int64), minlength=net.nc)  # number of targets per class
 
     # save memory
-    del output, preds
+    del preds
     torch.cuda.empty_cache()
-    return float(mp), float(mr), float(map), float(mf1), imgs_with_boxes
+    return float(mp), float(mr), float(map), float(mf1), imgs_with_boxes, output
 
 
 def flip_targets(targets, horizontal=True, vertical=False):
@@ -258,6 +258,30 @@ def random_erase_masks(inputs_shape, return_cuda=True):
     if return_cuda:
         masks = masks.cuda()
     return masks
+
+def predictions_to_coco(output, inputs):
+    """
+    NMS predictions --> coco targets
+    inputs: input image, only required for shape
+    output: list w/ size = batchsize
+            each element of list is a #predsx6 tensor, each prediction is of dims: xyxy, conf, cls.
+            xyxy is in pixel space and CAN have negative vales, so int and clamp
+    targets: [bidx, cls, x, y, w, h] where xywh is in 0-1 format
+    """
+    bsize, channels, height, width = inputs.shape
+    assert height==width, "height and width are different"
+    targets = []
+    for batchIdx, preds in enumerate(output):
+        if preds is not None:
+            for box in preds:
+                xyxy, conf, cls = box[0:4], box[4].item(), int(box[5].item())
+                xyxy = torch.clamp(xyxy, min=0.0)
+                xywh = xyxy2xywh(xyxy.view(1,-1))[0]
+                xywh = xywh / height
+                targets.append(torch.tensor([batchIdx, cls, conf, xywh[0].item(), xywh[1].item(), xywh[2].item(), xywh[3].item()]))
+    targets = torch.stack(targets, dim=0)
+    return targets
+
 
 def convert_to_coco(inputs_tensor, targets=None):
     """
