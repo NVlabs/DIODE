@@ -38,7 +38,7 @@ Note: You may also generate a docker image based on provided Dockerfile `docker_
 
 This repository allows for generating location and category conditioned images from an off-the-shelf Yolo-V3 object detection model.
 
-1. Download the directory *diode_yolo* from here: **ADD LINK TO UPLOADED DATASET HERE** (234 GB)
+1. Download the directory *diode_yolo* from google cloud storage: [gcs-link](https://console.cloud.google.com/storage/browser/diode-yolo-wacv) (234 GB)
 2. Copy pre-trained yolo-v3 checkpoint and pickle files as follows:
     ```
     $ cp /path/to/diode_yolo/pretrained/names.pkl /pathto/lpr_deep_inversion/models/yolo/
