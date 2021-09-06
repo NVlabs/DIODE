@@ -7,10 +7,17 @@ NVIDIA
 **Abstract:** We present DeepInversion for Object Detection (DIODE) to enable data-free knowledge distillation for neural networks trained on the object detection task. From a data-free perspective, DIODE synthesizes images given only an off-the-shelf pre-trained detection network and without any prior domain knowledge, generator network, or pre-computed activations. DIODE relies on two key components—first, an extensive set of differentiable augmentations to improve image fidelity and distillation effectiveness. Second, a novel automated bounding box and category sampling scheme for image synthesis enabling generating a large number of images with a diverse set of spatial and category objects. The resulting images enable data-free knowledge distillation from a teacher to a student detector, initialized from scratch. <br>
 In an extensive set of experiments, we demonstrate that DIODE’s ability to match the original training distribution consistently enables more effective knowledge distillation than out-of-distribution proxy datasets, which unavoidably occur in a data-free setup given the absence of the original domain knowledge.
 
-_**Todo**_ Please add link to pdf below<br>
-[[PDF](www.google.com)]
+
+[[PDF - OpenAccess CVF](https://openaccess.thecvf.com/content/WACV2021/papers/Chawla_Data-Free_Knowledge_Distillation_for_Object_Detection_WACV_2021_paper.pdf)]
 
 ![Core idea](images/coreidea.png "Core idea graphic")
+
+## LICENSE
+
+Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+
+This work is made available under the Nvidia Source Code License (1-Way Commercial).
+To view a copy of this license, visit https://github.com/NVlabs/DIODE/blob/master/LICENSE
 
 ## Setup environment
 
@@ -31,7 +38,7 @@ Note: You may also generate a docker image based on provided Dockerfile `docker_
 
 This repository allows for generating location and category conditioned images from an off-the-shelf Yolo-V3 object detection model.
 
-1. Download the directory *diode_yolo* from here: **ADD LINK TO UPLOADED DATASET HERE** (234 GB)
+1. Download the directory *diode_yolo* from google cloud storage: [gcs-link](https://console.cloud.google.com/storage/browser/diode-yolo-wacv) (234 GB)
 2. Copy pre-trained yolo-v3 checkpoint and pickle files as follows:
     ```
     $ cp /path/to/diode_yolo/pretrained/names.pkl /pathto/lpr_deep_inversion/models/yolo/
