@@ -12,6 +12,13 @@ _**Todo**_ Please add link to pdf below<br>
 
 ![Core idea](images/coreidea.png "Core idea graphic")
 
+## LICENSE
+
+Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+
+This work is made available under the Nvidia Source Code License (1-Way Commercial).
+To view a copy of this license, visit https://github.com/NVlabs/DIODE/blob/master/LICENSE
+
 ## Setup environment
 
 Install conda [[link](https://docs.conda.io/en/latest/)] python package manager then install the `lpr` environment and other packages as follows:
