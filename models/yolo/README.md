@@ -10,6 +10,7 @@ Yolo-V3 model, as well as utilities for dataset sampling and generation.
 The original Yolo-V3 code is from https://github.com/ultralytics/yolov3 and the following files are covered under its original licence https://github.com/NVlabs/DIODE/blob/master/models/yolo/LICENSE
 
 ```
+models/yolo/5k.txt
 models/yolo/cfg/*
 models/yolo/datasets.py
 models/yolo/models.py
@@ -19,7 +20,7 @@ models/yolo/utils.py
 ```
 
 ------------
-The remaining files `/models/yolo/__init__.py` and `models/yolo/yolostuff.py` have been added by this repository and are made available under the following license:
+The remaining files `/models/yolo/__init__.py`, `models/yolo/yolostuff.py` and `models/yolo/5k_fullpath.txt` have been added by this repository and are made available under the following license:
 
 Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 
