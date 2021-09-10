@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import collections
-from utils_di import create_folder, Logger
+from utils_di import create_folder
 import random, shutil, math
 import torch
 import torchvision
