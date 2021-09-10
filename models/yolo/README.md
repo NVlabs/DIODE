@@ -7,7 +7,7 @@ Yolo-V3 model, as well as utilities for dataset sampling and generation.
 ### LICENSE
 
 ------------------------------------------------------------------------------------
-The original Yolo-V3 code is from `https://github.com/ultralytics/yolov3` and the following files are covered under its original licence https://github.com/NVlabs/DIODE/blob/master/models/yolo/LICENSE
+The original Yolo-V3 code is from https://github.com/ultralytics/yolov3 and the following files are covered under its original licence https://github.com/NVlabs/DIODE/blob/master/models/yolo/LICENSE
 
 ```
 models/yolo/cfg/*

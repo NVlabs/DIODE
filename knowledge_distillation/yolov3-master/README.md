@@ -74,4 +74,27 @@ diode-onebox w/ fp sampling  /path/to/diode_yolo/hallucinate/hallucinate_320_nor
 diode-onebox w/ tiles  /path/to/diode_yolo/onebox_tiles_coco/tiles.tgz  --data NGC_tiles.data
 ```
 
+### LICENSE
+This code is built on original Yolo-V3 code written by https://github.com/ultralytics/yolov3 and the following files are covered under its original licence https://github.com/NVlabs/DIODE/blob/master/knowledge_distillation/yolov3-master/LICENSE 
+```
+yolov3-master/cfg/*
+yolov3-master/data/samples/*
+yolov3-master/data/coco*
+yolov3-master/data/get_coco*
+yolov3-master/utils/*
+yolov3-master/weights/*
+yolov3-master/detect.py
+yolov3-master/Dockerfile
+yolov3-master/models.py
+yolov3-master/requirements.txt
+yolov3-master/test.py
+yolov3-master/train.py
+yolov3-master/tutorial.ipynb
+```
 
+The following files have been added by this repository and are made available under the Nvidia Source Code License (1-Way Commercial). To view a copy of this license, visit https://github.com/NVlabs/DIODE/blob/master/LICENSE
+```
+yolov3-master/data/NGC*
+yolov3-master/distill.py
+yolov3-master/run.sh
+```
