@@ -38,17 +38,17 @@ Note: You may also generate a docker image based on provided Dockerfile `docker_
 
 This repository allows for generating location and category conditioned images from an off-the-shelf Yolo-V3 object detection model.
 
-1. Download the directory *diode_yolo* from google cloud storage: [gcs-link](https://console.cloud.google.com/storage/browser/diode-yolo-wacv) (234 GB)
+1. Download the directory *DIODE_data* from google cloud storage: [gcs-link](https://console.cloud.google.com/storage/browser/diode-yolo-wacv) (234 GB)
 2. Copy pre-trained yolo-v3 checkpoint and pickle files as follows:
     ```
-    $ cp /path/to/diode_yolo/pretrained/names.pkl /pathto/lpr_deep_inversion/models/yolo/
-    $ cp /path/to/diode_yolo/pretrained/colors.pkl /pathto/lpr_deep_inversion/models/yolo/
-    $ cp /path/to/diode_yolo/pretrained/yolov3-tiny.pt /pathto/lpr_deep_inversion/models/yolo/
-    $ cp /path/to/diode_yolo/pretrained/yolov3-spp-ultralytics.pt /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/DIODE_data/pretrained/names.pkl /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/DIODE_data/pretrained/colors.pkl /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/DIODE_data/pretrained/yolov3-tiny.pt /pathto/lpr_deep_inversion/models/yolo/
+    $ cp /path/to/DIODE_data/pretrained/yolov3-spp-ultralytics.pt /pathto/lpr_deep_inversion/models/yolo/
     ```
 2. Extract the one-box dataset (single object per image) as follows: 
     ```
-    $ cd /path/to/diode_yolo
+    $ cd /path/to/DIODE_data
     $ tar xzf onebox/onebox.tgz -C /tmp
     ```
 3. Confirm the folder `/tmp/onebox` containing the onebox dataset is present and has following directories and text file `manifest.txt`:

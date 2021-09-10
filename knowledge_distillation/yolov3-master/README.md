@@ -18,18 +18,18 @@ or use provided Dockerfile to create an image.
 
 ### How to run?
 
-1. Get access to `diode_yolo` directory as in top level repository. 
-2. Extract a proxy dataset from `diode_yolo` directory to `/tmp` as follows:
+1. Get access to `DIODE_data` directory as in top level repository.
+2. Extract a proxy dataset from `DIODE_data` directory to `/tmp` as follows:
    ``` 
-   $ tar xzf /path/to/diode_yolo/hallucinate/hallucinate_320_normed.tgz -C /tmp
+   $ tar xzf /path/to/DIODE_data/hallucinate/hallucinate_320_normed.tgz -C /tmp
    ```
-3. Extract coco dataset from `diode_yolo` directory to `/tmp` as follows: (for evaluation during training)
+3. Extract coco dataset from `DIODE_data` directory to `/tmp` as follows: (for evaluation during training)
    ```
-   $ tar xzf /path/to/diode_yolo/coco/coco.tgz -C /tmp
+   $ tar xzf /path/to/DIODE_data/coco/coco.tgz -C /tmp
    ```
-3. Copy yolo-v3 teacher weights file from `diode_yolo` to `weights` directory.
+3. Copy yolo-v3 teacher weights file from `DIODE_data` to `weights` directory.
    ```
-   cp /path/to/diode_yolo/pretrained/yolov3-spp-ultralytics.pt /path/to/lpr_deep_inversion/yolov3/weights/
+   cp /path/to/DIODE_data/pretrained/yolov3-spp-ultralytics.pt /path/to/lpr_deep_inversion/yolov3/weights/
    ```
 3. Perform knowledge distillation on proxy dataset as follows:
    ```
@@ -40,9 +40,9 @@ or use provided Dockerfile to create an image.
    python test.py --cfg yolov3-spp.cfg --weights='weights/best.pt' --img 640 --data='data/NGC_coco2014.data' --device='0'
    ```
 
-Distillation and training logs are available at `diode_yolo/logs/yolov3_spp/`. e.g for onebox dataset distillation:
+Distillation and training logs are available at `DIODE_data/logs/yolov3_spp/`. e.g for onebox dataset distillation:
 ```
-$ ls -1 /path/to/diode_yolo/logs/yolov3_spp/distill.onebox
+$ ls -1 /path/to/DIODE_data/logs/yolov3_spp/distill.onebox
 
 best.pt (best checkpoint)
 bestresults (evaluation results from best checkpoint)
@@ -61,17 +61,17 @@ Knowledge distillation can be performed with different proxy datasets. The avail
 
 ```
 # Real/Rendered proxy datasets
-coco  /path/to/diode_yolo/coco/coco.tgz  --data NGC_coco2014.data
-GTA5  /path/to/diode_yolo/gta5/gta5.tgz  --data NGC_gta5.data
-bdd100k  /path/to/diode_yolo/bdd100k/bdd100k.tar.gz  --data NGC_bdd100k.data
-voc  /path/to/diode_yolo/voc/voc.tgz  --data NGC_voc.data
-imagenet  /path/to/diode_yolo/imagenet/imagenet.tgz  --data NGC_imagenet.data
+coco  /path/to/DIODE_data/coco/coco.tgz  --data NGC_coco2014.data
+GTA5  /path/to/DIODE_data/gta5/gta5.tgz  --data NGC_gta5.data
+bdd100k  /path/to/DIODE_data/bdd100k/bdd100k.tar.gz  --data NGC_bdd100k.data
+voc  /path/to/DIODE_data/voc/voc.tgz  --data NGC_voc.data
+imagenet  /path/to/DIODE_data/imagenet/imagenet.tgz  --data NGC_imagenet.data
 
 # DIODE generated proxy datasets
-diode-coco  /path/to/diode_yolo/fakecoco/fakecocov3.tgz  --data NGC_fakecoco.data
-diode-onebox  /path/to/diode_yolo/onebox/onebox.tgz  --data NGC_onebox.data
-diode-onebox w/ fp sampling  /path/to/diode_yolo/hallucinate/hallucinate_320_normed.tgz  --data NGC_hallucinate.data
-diode-onebox w/ tiles  /path/to/diode_yolo/onebox_tiles_coco/tiles.tgz  --data NGC_tiles.data
+diode-coco  /path/to/DIODE_data/fakecoco/fakecocov3.tgz  --data NGC_fakecoco.data
+diode-onebox  /path/to/DIODE_data/onebox/onebox.tgz  --data NGC_onebox.data
+diode-onebox w/ fp sampling  /path/to/DIODE_data/hallucinate/hallucinate_320_normed.tgz  --data NGC_hallucinate.data
+diode-onebox w/ tiles  /path/to/DIODE_data/onebox_tiles_coco/tiles.tgz  --data NGC_tiles.data
 ```
 
 ### LICENSE
