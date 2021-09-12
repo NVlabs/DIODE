@@ -41,6 +41,7 @@ hyp = {'giou': 3.54,  # giou loss gain
        'shear': 0.641 * 0}  # image shear (+/- deg)
 
 def load_model(cfg, weights, img_size=320):
+    """Load a YoloV3 model matching architecture `cfg` with parameters `weights`."""
     net = Darknet(cfg, img_size)
     net.load_state_dict(torch.load(weights, map_location=torch.device('cpu'))['model'])
     net.nc = 80
@@ -53,6 +54,7 @@ def load_model(cfg, weights, img_size=320):
 
 
 def load_batch(train_txt_path, batch_size=64, img_size=320, shuffle=False):
+    """Loads a batch of data with `batch_size` items from dataset `train_txt_path`."""
     dataset = LoadImagesAndLabels(train_txt_path, img_size, batch_size,
                 augment=False, hyp=hyp, rect=False, cache_images=False,
                 cache_labels=False, single_cls=False)
@@ -65,9 +67,7 @@ def load_batch(train_txt_path, batch_size=64, img_size=320, shuffle=False):
 
 
 def inference(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01}):
-    """
-    Calculate iou metrics on network using imgs and corresponding targets
-    """
+    """Calculate iou metrics on network using `imgs` and corresponding `targets`."""
     imgs, targets = imgs.clone().detach().cuda(), targets.clone().detach().cuda()
 
     # Enable inference
@@ -173,9 +173,7 @@ def inference(net, imgs, targets, nms_params={"iou_thres":0.5, "conf_thres":0.01
 
 
 def flip_targets(targets, horizontal=True, vertical=False):
-    """
-    horizontal and vertical flipping for targets
-    """
+    """horizontal and vertical flipping for `targets`."""
     assert targets.shape[1] == 6
     targets_flipped = targets.clone().detach()
     if horizontal:
@@ -299,7 +297,8 @@ def predictions_to_coco(output, inputs):
 
 def convert_to_coco(inputs_tensor, targets=None):
     """
-    Convert an inputs_tensor (bs x 3 x height x width) to #bs images in PIL format
+    Convert an inputs_tensor (bs x 3 x height x width) to #batch-size images in PIL
+    format.
     Convert targets loaded by a dataloader to plaintxt annotations in coco format
     """
     images = inputs_tensor.clone().detach().cpu()
@@ -328,7 +327,7 @@ def convert_to_coco(inputs_tensor, targets=None):
     return pil_images, coco_targets
 
 def draw_targets(imgs, targets):
-
+    """Draw `targets` bboxes on `imgs`."""
     batch_size = len(imgs)
     # Get colors + names of classes
     with open("./models/yolo/names.pkl", "rb") as f:
