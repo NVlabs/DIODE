@@ -1,0 +1,4 @@
+classes=80
+train=/tmp/realsynth/manifest.txt
+valid=/tmp/coco/5k.txt
+names=data/coco.names
